@@ -52,7 +52,8 @@
     "check": "bun run typecheck && bun run build && bun run assert:lazy-graph && bun run test && bun run lint:dead",
     "assert:lazy-graph": "node scripts/assert-lazy-graph-host-free.mjs",
     "assert:build-artifacts": "node scripts/assert-build-artifacts.mjs",
-    "prepack": "bun run check"
+    "prepack": "bun run check",
+    "prepare": "bun run build"
   },
   "keywords": [
     "pi-package",
