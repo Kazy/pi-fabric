@@ -7,7 +7,6 @@ const PI_SKILL_LOAD_INSTRUCTION =
   "Use the read tool to load a skill's file when the task matches its description.";
 const FABRIC_SKILL_LOAD_INSTRUCTION =
   "Use `pi.read` inside `fabric_exec` to load a skill's file when the task matches its description.";
-const CWD_MARKER = "\nCurrent working directory:";
 
 export const restoreSkillsForFullCodePrompt = (
   systemPrompt: string,
@@ -27,8 +26,8 @@ export const restoreSkillsForFullCodePrompt = (
       systemPrompt.slice(end + "</available_skills>".length);
   }
   if (!section) return systemPrompt;
-
-  const cwdIndex = systemPrompt.lastIndexOf(CWD_MARKER);
-  if (cwdIndex < 0) return `${systemPrompt}${section}`;
-  return `${systemPrompt.slice(0, cwdIndex)}${section}${systemPrompt.slice(cwdIndex)}`;
+  // Append rather than splice before "Current working directory:": extensions
+  // loaded earlier (pi-claude-bridge) key on the prompt they saw and only match
+  // when it stays an exact prefix.
+  return `${systemPrompt}${section}`;
 };

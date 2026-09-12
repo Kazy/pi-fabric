@@ -29,18 +29,17 @@ const occurrences = (value: string, search: string): number =>
   value.split(search).length - 1;
 
 describe("full code skill prompt", () => {
-  it("restores Pi's skill catalog before the working directory", () => {
-    const prompt = restoreSkillsForFullCodePrompt(
-      "Core prompt\nCurrent working directory: /workspace",
-      skills,
-    );
+  it("appends Pi's skill catalog after the original prompt", () => {
+    const original = "Core prompt\nCurrent working directory: /workspace";
+    const prompt = restoreSkillsForFullCodePrompt(original, skills);
 
     expect(prompt).toContain(
       "Use `pi.read` inside `fabric_exec` to load a skill's file when the task matches its description.",
     );
     expect(prompt).toContain("<name>release-risk</name>");
     expect(prompt).not.toContain("manual-only");
-    expect(prompt.indexOf("<available_skills>")).toBeLessThan(
+    expect(prompt.startsWith(original)).toBe(true);
+    expect(prompt.indexOf("<available_skills>")).toBeGreaterThan(
       prompt.indexOf("Current working directory:"),
     );
   });
@@ -84,7 +83,7 @@ describe("full code skill prompt", () => {
     ).toBe(prompt);
   });
 
-  it("appends the catalog when a custom prompt has no working-directory marker", () => {
+  it("appends the catalog to a custom prompt", () => {
     const prompt = restoreSkillsForFullCodePrompt("Custom prompt", skills);
 
     expect(prompt.startsWith("Custom prompt\n\nThe following skills")).toBe(true);
