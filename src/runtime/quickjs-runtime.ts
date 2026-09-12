@@ -248,7 +248,12 @@ const __piAwaitGuard = (name, promise) => new Proxy(promise, {
 // (primary, options) two-arg merge for the string-primary tools, or a
 // positional spread mapped by __piPositionalFields. 0/1 args preserve the
 // legacy (args = {}) default so existing programs are unchanged.
-globalThis.pi = new Proxy({}, {
+// Enumerable tool names so Object.keys(pi) and "read" in pi work. Without
+// them a model probing the global after a runtime error sees {} and
+// concludes pi is unavailable, then routes every call through tools.call.
+const __piTarget = {};
+for (const __piName of __piToolNames) __piTarget[__piName] = undefined;
+globalThis.pi = new Proxy(__piTarget, {
   get(_target, property) {
     if (property === "then") return undefined;
     const name = String(property);

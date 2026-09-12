@@ -1293,6 +1293,32 @@ return { a, b, upper, fallback, status: settled[0].status, isPromise: pi.read("d
     });
   });
 
+  it("exposes core tool names to Object.keys(pi) and the in operator", async () => {
+    const hostCall = vi.fn(async () => "unused");
+    const result = await new QuickJsRuntime().execute(
+      `
+return {
+  keys: Object.keys(pi).sort(),
+  hasRead: "read" in pi,
+  hasNope: "nope" in pi,
+  readType: typeof pi.read,
+  entries: Object.entries(pi).length,
+};
+`,
+      hostCall,
+      options,
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.value).toEqual({
+      keys: ["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"],
+      hasRead: true,
+      hasNope: false,
+      readType: "function",
+      entries: 8,
+    });
+    expect(hostCall).not.toHaveBeenCalled();
+  });
+
   it("still applies the envelope guard after the promise is awaited", async () => {
     const hostCall = vi.fn(async () => ({ ok: true, output: " x ", details: null }));
     const result = await new QuickJsRuntime().execute(
