@@ -32,6 +32,7 @@ import {
 import { repairFabricGuestCode } from "./runtime/guest-code-repair.js";
 import { typeErrorRecoveryHint } from "./type-error-guidance.js";
 import { replacedCoreOverrideNames } from "./runtime/core-override-guest-types.js";
+import { readOnlyShellNotes } from "./core/read-only-shell.js";
 import { normalizeRunDisplay } from "./run-display.js";
 import type { PendingFabricHandoff } from "./prewalk/handoff.js";
 import type { FabricMediaBlock } from "./protocol.js";
@@ -876,10 +877,12 @@ export const createFabricExecTool = (
       }
       const fullFormattedValue = formatFabricValue(result.value, selectedResultFormat);
       const failureProgress = formatFailureProgress(result.trace);
+      const shellNotes = readOnlyShellNotes(result.audits);
       const fullSections = [...result.logs];
       if (fullFormattedValue.text) fullSections.push(fullFormattedValue.text);
       if (result.error) fullSections.push(`Runtime error: ${result.error}`);
       if (failureProgress) fullSections.push(failureProgress);
+      if (shellNotes) fullSections.push(shellNotes);
       const fullRawOutput = fullSections.join("\n\n");
       const outputBudget = modelOutputBudget(
         state.config.executor.maxOutputChars,
@@ -898,6 +901,7 @@ export const createFabricExecTool = (
       if (formattedValue.text) sections.push(formattedValue.text);
       if (result.error) sections.push(`Runtime error: ${result.error}`);
       if (failureProgress) sections.push(failureProgress);
+      if (shellNotes) sections.push(shellNotes);
       const rawOutput = sections.join("\n\n");
       const outputFormat =
         formattedValue.language &&
