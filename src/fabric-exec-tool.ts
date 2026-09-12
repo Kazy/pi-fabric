@@ -981,9 +981,17 @@ export const createFabricExecTool = (
               : error.message,
           )
           .join("\n");
+        // Lazy: a static import pulls the guest declarations into the startup graph.
+        const { replacedCoreOverrideNames } = await import("./runtime/core-override-guest-types.js");
+        const replacedCoreTools = replacedCoreOverrideNames(
+          state.capturedTools.list().map((entry) => ({
+            name: entry.name,
+            inputSchema: entry.definition.parameters,
+          })),
+        );
         // Guidance parses the guest declarations; load it only on a type error.
         const { typeErrorRecoveryHint } = await import("./type-error-guidance.js");
-        const recoveryHint = typeErrorRecoveryHint(code, result.typeErrors);
+        const recoveryHint = typeErrorRecoveryHint(code, result.typeErrors, replacedCoreTools);
         const bounded = await boundModelOutput(
           `Type errors; code was not executed:\n${text}${
             recoveryHint ? `\n\n${recoveryHint}` : ""

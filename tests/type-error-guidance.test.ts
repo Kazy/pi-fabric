@@ -15,6 +15,34 @@ describe("typeErrorRecoveryHint", () => {
     expect(checked.errors).toHaveLength(0);
   });
 
+  it("names a replacing override when the built-in object form hits its argument alias", () => {
+    const hint = typeErrorRecoveryHint(
+      'await pi.edit({ path: "/x", oldText: "a", newText: "b" });',
+      [typeError("Object literal may only specify known properties, and 'path' does not exist in type 'PiEditOverrideArgument'.", 1, 16)],
+    );
+    expect(hint).toContain("`pi.edit` is replaced by a captured extension override");
+    expect(hint).toContain('tools.describe({ ref: "pi.edit" })');
+  });
+
+  it("names a replacing override on an arity error only when the enclosing tool is replaced", () => {
+    const code = 'await pi.edit("/x", "old", "new");';
+    // TypeScript reports arity at the first extra argument, past the call head.
+    const errors = [typeError("Expected 0-1 arguments, but got 3.", 1, 21)];
+    expect(typeErrorRecoveryHint(code, errors, ["edit"])).toContain("`pi.edit` is replaced");
+    expect(typeErrorRecoveryHint(code, errors, ["write"]) ?? "").not.toContain("is replaced");
+    expect(typeErrorRecoveryHint(code, errors) ?? "").not.toContain("is replaced");
+  });
+
+  it("prefers the override hint over the property-owner hint for a replaced tool", () => {
+    const hint = typeErrorRecoveryHint(
+      'await pi.write({ path: "/x", content: "c" });',
+      [typeError("Object literal may only specify known properties, and 'content' does not exist in type 'PiWriteOverrideArgument'.", 1, 30)],
+      ["write"],
+    );
+    expect(hint).toContain("`pi.write` is replaced");
+  });
+
+
   it("guides unsupported pi.bash stdin toward a file input", () => {
     expect(typeErrorRecoveryHint(
       'await pi.bash({ command: "gh issue create --body-file -", stdin: π.body });',
