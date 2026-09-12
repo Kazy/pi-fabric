@@ -32,6 +32,7 @@ export const validationMessage = (
       .slice(0, 5)
       .map((error) => {
         // Prefix nested failures with their property path.
+        // TypeBox 1.x reports the location as instancePath; older builds used path.
         const location = error as { instancePath?: unknown; path?: unknown };
         const at = location.instancePath ?? location.path;
         return typeof at === "string" && at !== "" && at !== "/"
