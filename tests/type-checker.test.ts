@@ -237,6 +237,48 @@ return out;
     expect(result.errors).toEqual([]);
   });
 
+  it("defers property misses to runtime in lenient mode", () => {
+    const result = typeCheckFabricCode(
+      'const r = await pi.read("a.md"); return r.content ?? "";',
+      GUEST_TYPE_DECLARATIONS,
+    );
+    expect(result.errors).toEqual([]);
+  });
+
+  it("rejects property access that does not exist on a guest result in strict mode", () => {
+    const cases: Array<[string, RegExp]> = [
+      ['const r = await pi.read("a.md"); return r.content ?? "";', /content/],
+      ['const r = await pi.bash("ls"); return r.trim();', /trim/],
+      ['const r = await pi.bash("ls"); return r.outpt;', /outpt/],
+      ['return tools.bash({ command: "ls" });', /bash/],
+    ];
+    for (const [code, expected] of cases) {
+      const result = typeCheckFabricCode(code, GUEST_TYPE_DECLARATIONS, "strict");
+      expect(result.errors.length, code).toBeGreaterThan(0);
+      expect(result.errors[0]?.message, code).toMatch(expected);
+      expect(result.errors[0]?.line, code).toBe(1);
+    }
+  });
+
+  it("strict mode still accepts unknown results, settled-result narrowing, and dynamic namespaces", () => {
+    const result = typeCheckFabricCode(
+      `
+const r = await pi.bash("ls");
+const code = r.ok ? r.output : r.exitCode;
+const parsed = JSON.parse(r.output);
+const viaMcp = await mcp.anything.goes({ x: 1 });
+const viaExt = await extensions.whatever({ y: 2 });
+const [a, b] = await Promise.all([pi.read("a"), pi.grep("x", "src", 5)]);
+let later: string;
+if (r.ok) later = r.output; else later = "";
+return { code, parsed: parsed.nested.deep, viaMcp: viaMcp.anything, viaExt: viaExt.text, a, b, later };
+`,
+      GUEST_TYPE_DECLARATIONS,
+      "strict",
+    );
+    expect(result.errors).toEqual([]);
+  });
+
   it("reports user-facing line numbers for functional errors", () => {
     // Wrong arg type (path: 42) is now deferred to runtime (functional-errors-only);
     // an undefined name is a genuine breakage still caught at type-check.

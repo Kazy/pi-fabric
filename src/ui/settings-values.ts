@@ -22,6 +22,7 @@ export const RESULT_FORMATS = ["auto", "yaml", "json", "text"] as const;
 export const EXECUTOR_KERNELS = ["typescript", "python"] as const;
 export const PYTHON_RUNTIMES = ["monty", "cpython"] as const;
 export const EXECUTOR_RUNTIMES = ["quickjs", "node-process", "bun-process"] as const;
+export const TYPE_CHECK_MODES = ["lenient", "strict"] as const;
 export const SCHEMA_MODES = ["off", "audit", "enforce"] as const;
 export const COMPACTION_ENGINES = ["fabric", "pi"] as const;
 export const COMPACTION_THRESHOLD_SETTING_ID = "compaction.threshold";

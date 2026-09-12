@@ -1,5 +1,6 @@
 import path from "node:path";
 import ts from "typescript";
+import type { FabricTypeCheckMode } from "../config.js";
 
 export interface FabricTypeError {
   line: number;
@@ -13,13 +14,15 @@ export interface FabricTypeCheckResult {
   sourceMap?: string;
 }
 
-const compilerOptions: ts.CompilerOptions = {
+const compilerOptionsFor = (mode: FabricTypeCheckMode): ts.CompilerOptions => ({
   target: ts.ScriptTarget.ES2022,
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.NodeNext,
   strict: false,
   noImplicitAny: false,
-  strictNullChecks: false,
+  // Strict mode needs settled bash results to narrow on `r.ok`; the null
+  // diagnostics this enables are suppressed separately.
+  strictNullChecks: mode === "strict",
   strictFunctionTypes: false,
   strictBindCallApply: false,
   alwaysStrict: false,
@@ -30,14 +33,23 @@ const compilerOptions: ts.CompilerOptions = {
   sourceMap: true,
   skipLibCheck: true,
   lib: ["lib.es2022.d.ts"],
-};
+});
 
-const TYPE_CORRECTNESS_CODES = new Set<number>([
-  2339, 2551,
+const TYPE_CORRECTNESS_CODES = [
   2322, 2345, 2367,
   2531, 2532, 18047, 18048,
   7006, 7008, 7019, 7031, 7032, 7033, 7034,
-]);
+];
+// Property misses are the only signal that catches `.content` on a read
+// string or `.trim()` on a bash envelope; lenient mode leaves them to runtime.
+const PROPERTY_MISS_CODES = [2339, 2551];
+const STRICT_NULL_CODES = [2454, 2488, 2533, 2721, 2722, 18046];
+
+const suppressedCodesFor = (mode: FabricTypeCheckMode): Set<number> =>
+  new Set([
+    ...TYPE_CORRECTNESS_CODES,
+    ...(mode === "strict" ? STRICT_NULL_CODES : PROPERTY_MISS_CODES),
+  ]);
 
 let nextCheckerId = 0;
 
@@ -51,7 +63,9 @@ const wrapFabricGuestCode = (code: string): string =>
 class FabricTypeChecker {
   readonly #guestFile: string;
   readonly #declarationFile: string;
-  readonly #baseHost = ts.createCompilerHost(compilerOptions, true);
+  readonly #options: ts.CompilerOptions;
+  readonly #suppressed: Set<number>;
+  readonly #baseHost: ts.CompilerHost;
   readonly #stableFiles = new Map<string, ts.SourceFile>();
   readonly #declarationSource: ts.SourceFile;
   readonly #host: ts.CompilerHost;
@@ -59,7 +73,10 @@ class FabricTypeChecker {
   #sourceFile: ts.SourceFile;
   #program: ts.Program | undefined;
 
-  constructor(readonly declarations: string) {
+  constructor(readonly declarations: string, mode: FabricTypeCheckMode) {
+    this.#options = compilerOptionsFor(mode);
+    this.#suppressed = suppressedCodesFor(mode);
+    this.#baseHost = ts.createCompilerHost(this.#options, true);
     const id = ++nextCheckerId;
     this.#guestFile = normalizeTypeScriptPath(path.resolve(`/__pi_fabric_guest_${id}.ts`));
     this.#declarationFile = normalizeTypeScriptPath(
@@ -121,7 +138,7 @@ class FabricTypeChecker {
     );
     const program = ts.createProgram({
       rootNames: [this.#declarationFile, this.#guestFile],
-      options: compilerOptions,
+      options: this.#options,
       host: this.#host,
       ...(this.#program ? { oldProgram: this.#program } : {}),
     });
@@ -130,7 +147,7 @@ class FabricTypeChecker {
       ...program.getSyntacticDiagnostics(this.#sourceFile),
       ...program
         .getSemanticDiagnostics(this.#sourceFile)
-        .filter((diagnostic) => !TYPE_CORRECTNESS_CODES.has(diagnostic.code)),
+        .filter((diagnostic) => !this.#suppressed.has(diagnostic.code)),
     ];
     const errors = diagnostics.map((diagnostic) => {
       const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
@@ -163,15 +180,16 @@ class FabricTypeChecker {
 const checkerCache = new Map<string, FabricTypeChecker>();
 const MAX_CHECKERS = 4;
 
-const checkerFor = (declarations: string): FabricTypeChecker => {
-  const cached = checkerCache.get(declarations);
+const checkerFor = (declarations: string, mode: FabricTypeCheckMode): FabricTypeChecker => {
+  const key = `${mode}\n${declarations}`;
+  const cached = checkerCache.get(key);
   if (cached) {
-    checkerCache.delete(declarations);
-    checkerCache.set(declarations, cached);
+    checkerCache.delete(key);
+    checkerCache.set(key, cached);
     return cached;
   }
-  const checker = new FabricTypeChecker(declarations);
-  checkerCache.set(declarations, checker);
+  const checker = new FabricTypeChecker(declarations, mode);
+  checkerCache.set(key, checker);
   while (checkerCache.size > MAX_CHECKERS) {
     const oldest = checkerCache.keys().next().value as string | undefined;
     if (oldest === undefined) break;
@@ -202,4 +220,5 @@ export const transpileFabricCodeWithSourceMap = (code: string): FabricTranspileR
 export const typeCheckFabricCode = (
   code: string,
   declarations: string,
-): FabricTypeCheckResult => checkerFor(declarations).check(code);
+  mode: FabricTypeCheckMode = "lenient",
+): FabricTypeCheckResult => checkerFor(declarations, mode).check(code);

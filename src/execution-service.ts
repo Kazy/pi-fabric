@@ -166,7 +166,7 @@ export class FabricExecutionService {
     // language rather than silently changing Python programs into TypeScript.
     const runtimeKind = python
       ? monty ? "python:monty" : `python:${this.config.executor.cpython.binary}:${enforce}`
-      : `typescript:${enforce ? "quickjs" : this.config.executor.runtime}`;
+      : `typescript:${enforce ? "quickjs" : this.config.executor.runtime}:${this.config.executor.typeCheck}`;
     let runtime = this.#runtimeKind === runtimeKind ? this.#runtime : undefined;
     if (!runtime) {
       if (monty) {
@@ -177,7 +177,10 @@ export class FabricExecutionService {
         runtime = new CPythonRuntime(this.config.executor.cpython.binary, enforce);
       } else {
         const { TypeScriptKernelRuntime } = await import("./runtime/typescript-kernel.js");
-        runtime = new TypeScriptKernelRuntime(enforce ? "quickjs" : this.config.executor.runtime);
+        runtime = new TypeScriptKernelRuntime(
+          enforce ? "quickjs" : this.config.executor.runtime,
+          this.config.executor.typeCheck,
+        );
       }
       this.#runtime = runtime;
       this.#runtimeKind = runtimeKind;

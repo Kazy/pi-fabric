@@ -13,6 +13,7 @@ import {
   EXECUTOR_KERNELS,
   PYTHON_RUNTIMES,
   EXECUTOR_RUNTIMES,
+  TYPE_CHECK_MODES,
   formatMs,
   formatBytes,
   executorMemoryLimitOptions,
@@ -79,6 +80,11 @@ export const buildExecutorSection = (
             ? "TypeScript only. Schema enforce mode requires the isolated QuickJS runtime; it does not change the configured kernel."
             : "TypeScript only; ignored by Python. QuickJS is isolated and limited by WASM32. Node/Bun processes support larger heaps but are an unsafe trusted-code escape hatch, not a security sandbox.",
           values: enforceTypeScript ? ["quickjs"] : EXECUTOR_RUNTIMES,
+        }),
+        setting("executor.typeCheck", "Type check (TS)", config.executor.typeCheck, {
+          description:
+            "TypeScript only; ignored by Python. Lenient defers property misses on guest results to runtime dispatch. Strict rejects them before execution, including MCP servers and tools absent from the discovered declarations.",
+          values: TYPE_CHECK_MODES,
         }),
         setting("executor.timeoutMs", "Timeout", formatMs(config.executor.timeoutMs), {
           description: `Default wall-clock time for a single fabric_exec program. A per-invocation timeoutMs or a matching executor.hostCallTimeouts ref can raise it up to the ${formatMs(config.executor.maxTimeoutMs)} policy maximum.`,

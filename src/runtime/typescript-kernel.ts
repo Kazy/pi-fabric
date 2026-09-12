@@ -1,4 +1,4 @@
-import type { FabricExecutorRuntime } from "../config.js";
+import type { FabricExecutorRuntime, FabricTypeCheckMode } from "../config.js";
 import type { FabricGuestTypeSources } from "../protocol.js";
 import type { FabricKernelRuntime, FabricHostCall, FabricSandboxOptions } from "./kernel.js";
 import { QuickJsRuntime } from "./quickjs-runtime.js";
@@ -13,8 +13,10 @@ import { buildCoreOverrideGuestDeclarations, type FabricCoreOverrideTypeSource }
 // Keep compiler and guest declaration dependencies behind this lazy boundary.
 export class TypeScriptKernelRuntime implements FabricKernelRuntime {
   readonly #runtime: FabricKernelRuntime;
+  readonly #typeCheck: FabricTypeCheckMode;
 
-  constructor(runtime: FabricExecutorRuntime) {
+  constructor(runtime: FabricExecutorRuntime, typeCheck: FabricTypeCheckMode = "lenient") {
+    this.#typeCheck = typeCheck;
     this.#runtime = runtime === "node-process"
       ? new NodeProcessRuntime()
       : runtime === "bun-process"
@@ -37,7 +39,7 @@ export class TypeScriptKernelRuntime implements FabricKernelRuntime {
       excludeGlobals: unavailable,
       dynamic: buildDynamicGuestDeclarations(sources),
       ...(coreOverrides ? { coreOverrides } : {}),
-    }));
+    }), this.#typeCheck);
     return { code, checked };
   }
 

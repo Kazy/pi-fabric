@@ -164,6 +164,12 @@ describe("Fabric configuration", () => {
     expect(invalid.executor.runtime).toBe("quickjs");
   });
 
+  it("normalizes the executor type-check mode", () => {
+    expect(DEFAULT_FABRIC_CONFIG.executor.typeCheck).toBe("lenient");
+    expect(normalizeFabricConfig({ executor: { typeCheck: "strict" } }).executor.typeCheck).toBe("strict");
+    expect(normalizeFabricConfig({ executor: { typeCheck: "yolo" } }).executor.typeCheck).toBe("lenient");
+  });
+
   it("normalizes a dedicated prewalk executor model", () => {
     expect(
       normalizeFabricConfig({ prewalk: { model: "anthropic/executor" } }).prewalk,

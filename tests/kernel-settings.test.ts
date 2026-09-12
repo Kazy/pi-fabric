@@ -35,6 +35,11 @@ describe("kernel settings", () => {
     expect(row("executor.cpython.binary").submenu).toBeDefined();
     expect(row("executor.runtime").label).toBe("Runtime (TS)");
     expect(row("executor.runtime").description).toContain("ignored by Python");
+    expect(row("executor.typeCheck")).toMatchObject({
+      label: "Type check (TS)",
+      currentValue: "lenient",
+      values: ["lenient", "strict"],
+    });
     expect(section.items.some((item) => item.id === "executor.cpython.enabled")).toBe(false);
     const rendered = section.render(80);
     expect(rendered.join("\n")).toContain("CPython binary");
