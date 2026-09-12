@@ -12,7 +12,7 @@ const FABRIC_GLOBALS = [
   "components", "console", "council", "decisions", "describeNamespace", "describeTool",
   "exit", "extensions", "fabric", "image", "jev", "load", "log", "mcp", "memory", "mesh",
   "models", "nativeDiscovery", "nativeTools", "parallel", "payloads", "phase", "pi",
-  "pipeline", "prewalk", "print", "programs", "rlm", "schema", "searchTools",
+  "pipeline", "prewalk", "print", "prior", "programs", "rlm", "schema", "searchTools",
   "setInterval", "setTimeout", "state", "store", "text", "thinking", "tools", "workflow",
   // CPython and Monty bind asyncio in every program namespace.
   "asyncio",

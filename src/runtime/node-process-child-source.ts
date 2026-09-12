@@ -77,6 +77,7 @@ const run = async (message) => {
     __bun,
     print,
     π: jsonCompatible(message.strings),
+    __fabricPrior: jsonCompatible(message.prior ?? []),
   };
   const context = vm.createContext(sandbox, {
     name: "pi-fabric-node-process",

@@ -287,6 +287,7 @@ export class NodeProcessRuntime {
         setup: guestSetupSource(options.piToolCanonicalFields, options.nativeStoreEnabled, options.codemodeProfile, options.nativeToolsEnabled, options.providerGlobals),
         code: guestBundle.code,
         strings: options.strings ?? {},
+        prior: options.prior ?? [],
         tokenBudget: options.tokenBudget,
         maxLogChars: options.maxLogChars ?? 100_000,
       });

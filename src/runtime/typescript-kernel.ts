@@ -8,6 +8,8 @@ import { typeCheckFabricCode, wrapFabricGuestCode } from "./type-checker.js";
 import { guestTypeDeclarations } from "./guest-types.js";
 import { buildDynamicGuestDeclarations } from "./dynamic-guest-types.js";
 import { buildCoreOverrideGuestDeclarations, type FabricCoreOverrideTypeSource } from "./core-override-guest-types.js";
+import { buildPriorGuestDeclarations } from "./prior-guest-types.js";
+import type { FabricPriorCall } from "./kernel.js";
 
 // TypeScript is one kernel, with several JavaScript execution engines.
 // Keep compiler and guest declaration dependencies behind this lazy boundary.
@@ -32,6 +34,7 @@ export class TypeScriptKernelRuntime implements FabricKernelRuntime {
     overrides: FabricCoreOverrideTypeSource[],
     includeTypeCorrectness = false,
     codemodeProfile: "additive" | "native" = "additive",
+    prior: readonly FabricPriorCall[] = [],
   ) {
     // Native scripts are JavaScript, not repaired/type-checked TypeScript.
     // Dispatch still validates every tool argument and applies all policy.
@@ -44,6 +47,7 @@ export class TypeScriptKernelRuntime implements FabricKernelRuntime {
       excludeGlobals: unavailable,
       dynamic: buildDynamicGuestDeclarations(sources),
       ...(coreOverrides ? { coreOverrides } : {}),
+      prior: buildPriorGuestDeclarations(prior),
     }), includeTypeCorrectness, this.#typeCheck);
     return { code, checked };
   }

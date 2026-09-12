@@ -72,6 +72,7 @@ import type {
   FabricSandboxResult,
   FabricSandboxTerminationReason,
 } from "./runtime/kernel.js";
+import type { FabricPriorCall } from "./runtime/kernel.js";
 import type { TypeScriptKernelRuntime } from "./runtime/typescript-kernel.js";
 import type { FabricExecJournal, FabricJournalOffer } from "./runtime/exec-journal.js";
 import type { FabricJournalDelivery } from "./runtime/kernel.js";
@@ -134,6 +135,8 @@ const stopOwnedWork = async (
   return outcomes;
 };
 
+const MAX_PRIOR_CALLS = 32;
+
 export interface FabricExecutionResult {
   success: boolean;
   kernel?: FabricKernel;
@@ -149,6 +152,8 @@ export interface FabricExecutionResult {
   elapsedMs: number;
   typeErrors?: FabricTypeError[];
   error?: string;
+  /** Nested results parked for the next program's `prior` after a failure. */
+  parkedPriorCalls?: number;
   handoffRequest?: Record<string, unknown>;
   usage?: Usage;
   /** Stop outcomes for owned provider participants after cancellation or timeout. */
@@ -319,6 +324,10 @@ export class FabricExecutionService {
   #participants: ProviderParticipantRegistry | undefined;
   readonly nativeCodemode: NativeCodemodeProvider;
   readonly #nestedRunners = new Map<string, FabricNestedProgramRunner>();
+  // Results of the nested calls that completed before the last failed program.
+  // Read by the next program as `prior`; consumed when that program starts to
+  // run, so a type-check failure in between keeps them.
+  #prior: FabricPriorCall[] = [];
   constructor(
     readonly registry: ActionRegistry,
     readonly config: FabricConfig,
@@ -481,6 +490,7 @@ export class FabricExecutionService {
         coreOverrides,
         false,
         codemodeProfile,
+        this.#prior,
       ));
     } else {
       providerGlobals = this.registry.providerGlobals({
@@ -846,6 +856,25 @@ export class FabricExecutionService {
       }
       return value;
     };
+    const priorForRun = this.#prior;
+    this.#prior = [];
+    const parked: FabricPriorCall[] = [];
+    const parkCompleted = (ref: string, args: Record<string, unknown>, value: unknown): void => {
+      if (value === undefined || parked.length >= MAX_PRIOR_CALLS) return;
+      // Discovery answers are cheap to recompute; a generic call parks under
+      // the action it resolved so the next program names the real ref.
+      if (ref.startsWith("fabric.$") && ref !== "fabric.$call") return;
+      if (ref === "fabric.$call" && typeof args.ref === "string") {
+        const inner = args.args;
+        parked.push({
+          ref: args.ref,
+          args: typeof inner === "object" && inner !== null && !Array.isArray(inner) ? (inner as Record<string, unknown>) : {},
+          result: value,
+        });
+        return;
+      }
+      parked.push({ ref, args, result: value });
+    };
     const nativeTransaction = this.nativeCodemode.begin(options.parentToolCallId, options.context, !python && codemodeProfile === "native");
     const loadNativeCatalog = async (context: typeof baseContext) => {
       const api = await import("./native-tool-catalog.js");
@@ -1065,6 +1094,7 @@ export class FabricExecutionService {
       } : await runtime.execute(
         code,
         hostCall = async (ref, args, runtimeSignal, humanWait, call) => {
+          const value = await (async (): Promise<unknown> => {
           const callContext = { ...baseContext, signal: runtimeSignal, ...(call ? { journalSeq: call.seq } : {}) };
           // Registry calls arm after resolution; every other bridge ref arms here
           // unless it only discovers or presents.
@@ -1467,6 +1497,9 @@ export class FabricExecutionService {
             default:
               return invokeAction(ref, args, callContext, humanWait);
           }
+          })();
+          parkCompleted(ref, args, value);
+          return value;
         },
         {
           ...sandboxBase,
@@ -1474,6 +1507,7 @@ export class FabricExecutionService {
           ...(checked.javascript ? { transpiledCode: checked.javascript } : {}),
           ...(checked.sourceMap ? { transpiledSourceMap: checked.sourceMap } : {}),
           ...(options.strings ? { strings: options.strings } : {}),
+          ...(!python ? { prior: priorForRun } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
           ...(journal ? { journal } : {}),
           ...(journal?.resuming && options.context.hasUI ? {
@@ -1529,6 +1563,7 @@ export class FabricExecutionService {
         .join("; ")}`;
       sandboxResult.error = sandboxResult.error ? `${sandboxResult.error}\n${summary}` : summary;
     }
+    if (!succeeded && !python && parked.length > 0) this.#prior = parked;
     this.activity?.finish(
       options.parentToolCallId,
       succeeded,
@@ -1558,6 +1593,7 @@ export class FabricExecutionService {
       ...(assessment ? { assessment: assessment.seal(runOutcome) } : {}),
       elapsedMs: performance.now() - startedAt,
       ...(sandboxResult.error ? { error: sanitizeFabricMediaText(sandboxResult.error) } : {}),
+      ...(this.#prior.length > 0 ? { parkedPriorCalls: this.#prior.length } : {}),
       ...(handoffRequest ? { handoffRequest } : {}),
       ...(ownedWork.length > 0 ? { ownedWork } : {}),
       ...(classifierUsages.length > 0
