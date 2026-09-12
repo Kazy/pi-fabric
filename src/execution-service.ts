@@ -957,6 +957,18 @@ export class FabricExecutionService {
                   // (tools.list is the trap: servers sorted past the cap look
                   // missing). envelope: true returns an honest page with totals;
                   // the bare-array default stays byte-for-byte unchanged.
+                  // A listing is navigation. Returned raw with every schema it
+                  // ran to ~1,500 lines of model context; schemas stay one
+                  // describe away unless the caller asks for them.
+                  const summarize = (actions: ResolvedFabricAction[]) =>
+                    args.schemas === true
+                      ? actions
+                      : actions.map((action) => {
+                          const summary: Record<string, unknown> = { ...action };
+                          delete summary.inputSchema;
+                          delete summary.outputSchema;
+                          return summary;
+                        });
                   if (args.envelope === true) {
                     const limit = fabricActionListLimit(
                       typeof args.limit === "number" ? args.limit : undefined,
@@ -974,16 +986,17 @@ export class FabricExecutionService {
                     return {
                       kind: "pi-fabric.action-list",
                       version: 1,
-                      actions: page,
+                      actions: summarize(page),
                       total: visible.length,
                       truncated: visible.length > page.length,
                       limit,
                     };
                   }
                   const actions = await this.registry.list(request, callContext);
-                  return actions.filter(
+                  const visible = actions.filter(
                     (action) => effectiveFullCodeMode || !fullCodeProvider(action.provider),
                   );
+                  return summarize(visible);
                 },
               );
             case "fabric.$search":
