@@ -51,6 +51,16 @@ interface FabricAction {
   namespace?: string;
   effect?: FabricActionEffect;
 }
+// tools.list() drops schemas; pass { schemas: true } or call tools.describe.
+interface FabricActionSummary {
+  ref: string;
+  provider: string;
+  name: string;
+  description: string;
+  risk: "read" | "write" | "execute" | "network" | "agent";
+  namespace?: string;
+  effect?: FabricActionEffect;
+}
 interface FabricAgentRequest {
   /** Omitted/inherit uses caller executor.kernel; concrete choices require Pi with extensions. */
   kernel?: FabricKernel | "inherit";
@@ -358,7 +368,8 @@ interface FabricCapabilityCatalog {
 interface FabricToolsApi {
   providers(): Promise<Array<{ name: string; description: string }>>;
   catalog(args?: { provider?: string; limit?: number }): Promise<FabricCapabilityCatalog>;
-  list(args?: { provider?: string; namespace?: string; query?: string; limit?: number }): Promise<FabricAction[]>;
+  list(args: { provider?: string; namespace?: string; query?: string; limit?: number; schemas: true }): Promise<FabricAction[]>;
+  list(args?: { provider?: string; namespace?: string; query?: string; limit?: number; schemas?: false }): Promise<FabricActionSummary[]>;
   search(query: string): Promise<FabricAction[]>;
   search(args: { query: string; limit?: number }): Promise<FabricAction[]>;
   describe(args: { ref: string }): Promise<FabricAction>;

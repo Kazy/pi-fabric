@@ -599,9 +599,19 @@ export class FabricExecutionService {
                     },
                     callContext,
                   );
-                  return actions.filter(
+                  const visible = actions.filter(
                     (action) => effectiveFullCodeMode || !fullCodeProvider(action.provider),
                   );
+                  // A listing is navigation. Returned raw with every schema it
+                  // ran to ~1,500 lines of model context; schemas stay one
+                  // describe away unless the caller asks for them.
+                  if (args.schemas === true) return visible;
+                  return visible.map((action) => {
+                    const summary: Record<string, unknown> = { ...action };
+                    delete summary.inputSchema;
+                    delete summary.outputSchema;
+                    return summary;
+                  });
                 },
               );
             case "fabric.$search":
