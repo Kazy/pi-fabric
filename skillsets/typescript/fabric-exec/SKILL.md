@@ -9,7 +9,7 @@ description: >-
 
 # fabric_exec — core reference
 
-One program in the **TypeScript kernel**. Write TypeScript only in `code`. There is **no per-call kernel selector**, language autodetection, or fallback. Returned values and explicitly emitted `print()`/`console` output reach the model; intermediate values stay in the sandbox. `π` is payload data, not a tool.
+One program in the **TypeScript kernel**. Write TypeScript only in `code`. There is **no per-call kernel selector**, language autodetection, or fallback. Returned values and explicitly emitted `print()`/`console` output reach the model; intermediate values stay in the sandbox. `π` is payload data, not a tool. After a failed program, `prior.get(ref, args)` and `prior.calls[i].result` return the results of the nested calls that completed, typed from the parked values; the store is cleared when the next program runs.
 
 QuickJS is isolated by default and receives static type checking; native Node/Bun is an explicit trusted-code escape hatch. Do not switch interpreters through shell commands to perform Fabric orchestration. Prefer one compact return value. Explicit log output is also included in the bounded tool result, so do not print raw intermediate payloads.
 
