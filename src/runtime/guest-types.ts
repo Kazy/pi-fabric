@@ -521,8 +521,10 @@ interface PiToolsApi {
   write(path: string, content: string): Promise<{ ok: true; output: string; details: unknown }>;
   grep(args: PiGrepArgument): Promise<string>;
   grep(pattern: string, path?: string | PiGrepOptions, limit?: number): Promise<string>;
+  grep(pattern: string, path: string, options: PiGrepOptions): Promise<string>;
   find(args: PiFindArgument): Promise<string>;
   find(pattern: string, path?: string | PiFindOptions, limit?: number): Promise<string>;
+  find(pattern: string, path: string, options: PiFindOptions): Promise<string>;
   ls(args?: PiLsArgument, options?: PiLsOptions): Promise<string>;
 }
 type FabricActorHostEvent =

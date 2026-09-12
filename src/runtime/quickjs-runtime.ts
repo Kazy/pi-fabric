@@ -179,8 +179,16 @@ const __positionalToArgs = (name, rest) => {
   }
   const order = __piPositionalFields[name];
   if (!order) return rest.length > 0 ? first : {};
-  const out = {};
-  for (let i = 0; i < rest.length && i < order.length; i++) {
+  // grep/find: a trailing plain object is an options bag, pi.grep(pattern, path,
+  // { limit }), not a value for the next positional field (limit: {} fails host
+  // validation, and the type check suppresses that assignability miss).
+  const lastIndex = rest.length - 1;
+  const trailing = rest[lastIndex];
+  const hasOptions = (name === "grep" || name === "find") && lastIndex >= 1 &&
+    trailing !== null && typeof trailing === "object" && !Array.isArray(trailing);
+  const out = hasOptions ? { ...trailing } : {};
+  const positional = hasOptions ? lastIndex : rest.length;
+  for (let i = 0; i < positional && i < order.length; i++) {
     const v = rest[i];
     if (v !== undefined) out[order[i]] = v;
   }
