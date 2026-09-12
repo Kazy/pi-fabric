@@ -18,6 +18,7 @@ import {
   EXECUTOR_KERNELS,
   PYTHON_RUNTIMES,
   EXECUTOR_RUNTIMES,
+  TYPE_CHECK_MODES,
   formatMs,
   formatBytes,
   executorMemoryLimitOptions,
@@ -93,6 +94,11 @@ export const buildExecutorSection = (
         setting("executor.codemodeProfile", "Codemode API (TS)", config.executor.codemodeProfile, {
           description: "Additive preserves Fabric's tools API and adds nativeTools plus nonconflicting tools aliases. Native gives tools and discovery helpers Pi semantics; Fabric discovery stays at fabric.tools. Policies and limits still apply. Ignored by Python.",
           values: ["additive", "native"],
+        }),
+        setting("executor.typeCheck", "Type check (TS)", config.executor.typeCheck, {
+          description:
+            "TypeScript only; ignored by Python. Lenient defers property misses on guest results to runtime dispatch. Strict rejects them before execution, including MCP servers and tools absent from the discovered declarations.",
+          values: TYPE_CHECK_MODES,
         }),
         setting("executor.timeoutMs", "Timeout", formatMs(config.executor.timeoutMs), {
           description: `Default wall-clock time for a single fabric_exec program. A per-invocation timeoutMs or a matching executor.hostCallTimeouts ref can raise it up to the ${formatMs(config.executor.maxTimeoutMs)} policy maximum.`,
