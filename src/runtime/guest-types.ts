@@ -1627,6 +1627,11 @@ declare const π: Readonly<Record<string, string>>;
 // Process runtimes only: node/bun children bridge native-module imports;
 // quickjs has no module loader and rejects __fabricImport at runtime.
 declare function __fabricImport(specifier: string): Promise<any>;
+interface FabricPriorCall { ref: string; args: Record<string, unknown>; result: unknown }
+// Loose fallback; the TypeScript kernel replaces this with a declaration typed
+// from the calls parked by the previous failed program.
+interface FabricPriorApi { calls: readonly FabricPriorCall[]; get(ref: string, args?: Record<string, unknown>): unknown }
+declare const prior: FabricPriorApi;
 declare function print(...args: unknown[]): void;
 declare function setTimeout(handler: (...args: any[]) => void, timeout?: number): number;
 declare function clearTimeout(handle: number): void;
@@ -1645,6 +1650,7 @@ const FULL_CODE_GLOBAL_DECLARATIONS = [
 const PI_LOOSE_DECLARATION = "declare const pi: PiToolsApi;\n";
 const MCP_LOOSE_DECLARATION = "declare const mcp: FabricMcpApi;\n";
 const EXTENSIONS_LOOSE_DECLARATION = "declare const extensions: FabricExtensionsApi;\n";
+const PRIOR_LOOSE_DECLARATION = "declare const prior: FabricPriorApi;\n";
 
 export interface FabricGuestDeclarationOptions {
   /** Global names to omit (for example providers disabled by configuration). */
@@ -1661,6 +1667,8 @@ export interface FabricGuestDeclarationOptions {
    * The block is applied only to the full-code `pi` declaration.
    */
   coreOverrides?: string;
+  /** Replacement `prior` block from buildPriorGuestDeclarations(). */
+  prior?: string;
 }
 
 const globalDeclarationLine = (name: string): RegExp =>
@@ -1700,6 +1708,11 @@ export const guestTypeDeclarations = (
       EXTENSIONS_LOOSE_DECLARATION,
       terminatedDeclaration(options.dynamic.extensions),
     );
+  }
+  if (options.prior && result.includes(PRIOR_LOOSE_DECLARATION)) {
+    // The loose interface stays declared; a same-name interface merges, so the
+    // generated block redeclares the constant against a renamed strict type.
+    result = result.replace(PRIOR_LOOSE_DECLARATION, terminatedDeclaration(options.prior));
   }
   return result;
 };

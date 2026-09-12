@@ -24,6 +24,15 @@ const trace = (
 });
 
 describe("formatFailureProgress", () => {
+  it("tells the model where parked results live when the host kept them", () => {
+    const operations = [{ ref: "pi.read", args: { path: "a.ts" }, outcome: "succeeded" as const }];
+    const parked = formatFailureProgress(trace("failed", operations as never), 1);
+    expect(parked).toContain("prior.get(ref, args)");
+    expect(parked).toContain("prior.calls[i].result");
+    const unparked = formatFailureProgress(trace("failed", operations as never));
+    expect(unparked).not.toContain("prior.");
+  });
+
   it("reports completed refs and paths without exposing results", () => {
     const formatted = formatFailureProgress(trace("failed", [
       {
