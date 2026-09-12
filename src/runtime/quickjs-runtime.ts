@@ -138,7 +138,9 @@ const __piStringFields = { bash: "command", powershell: "command", read: "path",
 // (primary, options) merge in __positionalToArgs does not apply. One-field
 // tools (read/bash/ls) stay absent: their two-arg form is a bare string plus
 // an options object, repaired by the merge instead of a wrong-arity (2554)
-// type error; only a non-object second arg still fails 2554.
+// type error. A bare number second arg on bash/powershell is the timeout in
+// seconds (models write pi.bash(cmd, 30) repeatedly); any other non-object
+// second arg still fails 2554.
 const __piPositionalFields = {
   grep: ["pattern", "path", "limit"],
   find: ["pattern", "path", "limit"],
@@ -166,6 +168,14 @@ const __positionalToArgs = (name, rest) => {
     const merged = { ...second };
     merged[primaryField] = first;
     return merged;
+  }
+  if (
+    rest.length === 2 &&
+    typeof first === "string" &&
+    (name === "bash" || name === "powershell") &&
+    typeof second === "number"
+  ) {
+    return { command: first, timeout: second };
   }
   const order = __piPositionalFields[name];
   if (!order) return rest.length > 0 ? first : {};

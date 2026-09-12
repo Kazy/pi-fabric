@@ -512,7 +512,9 @@ type PiLsCompatibilityArgument = string | (PiOptionalPathArgument & PiNumericStr
 interface PiToolsApi {
   read(args: PiReadArgument, options?: PiReadOptions): Promise<string>;
   bash(args: PiBashArgument, options?: PiBashOptions): Promise<{ ok: true; output: string; details: unknown } | { ok: false; output: string; details: null; exitCode: number; error: string }>;
+  bash(command: string, timeoutSeconds: number): Promise<{ ok: true; output: string; details: unknown } | { ok: false; output: string; details: null; exitCode: number; error: string }>;
   powershell(args: PiPowerShellArgument, options?: PiPowerShellOptions): Promise<{ ok: true; output: string; details: unknown } | { ok: false; output: string; details: null; exitCode: number; error: string }>;
+  powershell(command: string, timeoutSeconds: number): Promise<{ ok: true; output: string; details: unknown } | { ok: false; output: string; details: null; exitCode: number; error: string }>;
   edit(args: PiEditArgument): Promise<{ ok: true; output: string; details: unknown }>;
   edit(path: string, oldText: string, newText: string): Promise<{ ok: true; output: string; details: unknown }>;
   write(args: PiWriteArgument): Promise<{ ok: true; output: string; details: unknown }>;
