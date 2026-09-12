@@ -13,6 +13,8 @@ const TUPLE_ARITY_PATTERN = /Tuple type .* of length '[0-9]+' has no element at 
 const MISSING_NAME_PATTERN = /^Cannot find name '([^']+)'/;
 const UNKNOWN_PROPERTY_PATTERN = /'([^']+)' does not exist in type '([^']+)'/;
 const PI_CALL_PATTERN = /\bpi\.(\w+)\s*\(/g;
+const OVERRIDE_ARGUMENT_TYPE_PATTERN = /\bPi([A-Z]\w*)OverrideArgument\b/;
+const ARITY_PATTERN = /Expected \d+(?:-\d+)? arguments?, but got \d+/;
 
 // fabric_exec envelope arguments that are commonly misplaced inside `code`.
 const FABRIC_EXEC_ARGUMENT_NOTES: Readonly<Record<string, string>> = {
@@ -112,17 +114,28 @@ const hasLiteralPayloadInterpolation = (
   });
 };
 
+const overriddenToolHint = (tool: string): string =>
+  `Recovery hint: \`pi.${tool}\` is replaced by a captured extension override with its own schema, so Fabric's built-in ${tool} forms are unavailable in this session. Run \`tools.describe({ ref: "pi.${tool}" })\` and pass only the fields it lists.`;
+
 export const typeErrorRecoveryHint = (
   code: string,
   errors: FabricTypeError[],
+  replacedCoreTools: readonly string[] = [],
 ): string | undefined => {
   for (const error of errors) {
     const property = UNKNOWN_PROPERTY_PATTERN.exec(error.message)?.[1];
     const typeText = UNKNOWN_PROPERTY_PATTERN.exec(error.message)?.[2];
     if (property !== undefined && typeText !== undefined) {
+      const overridden = OVERRIDE_ARGUMENT_TYPE_PATTERN.exec(typeText)?.[1]?.toLowerCase();
+      if (overridden !== undefined && isCoreToolName(overridden)) return overriddenToolHint(overridden);
       const tool = toolFromTypeText(typeText) ?? enclosingCoreTool(code, error);
+      if (tool !== undefined && replacedCoreTools.includes(tool)) return overriddenToolHint(tool);
       const hint = unknownPropertyHint(property, tool);
       if (hint) return hint;
+    }
+    if (ARITY_PATTERN.test(error.message)) {
+      const tool = enclosingCoreTool(code, error);
+      if (tool !== undefined && replacedCoreTools.includes(tool)) return overriddenToolHint(tool);
     }
   }
   if (

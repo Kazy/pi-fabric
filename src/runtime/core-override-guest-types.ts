@@ -26,6 +26,39 @@ const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const compatibilityArgumentTypeFor = (name: PiCoreToolName): string =>
   PI_CORE_COMPATIBILITY_ARGUMENT_TYPE_NAMES[name];
 
+// Built-in guest forms resolve to these keys. An override whose closed schema
+// lacks one cannot accept Fabric's positional or shorthand forms, so it
+// replaces the slot instead of extending it (pi-merge-tools' edit takes
+// {input|text} and rejects {path, edits} at validation).
+const PI_CORE_BUILTIN_KEYS: Record<PiCoreToolName, readonly string[]> = {
+  read: ["path"],
+  bash: ["command"],
+  powershell: ["command"],
+  edit: ["path"],
+  write: ["path", "content"],
+  grep: ["pattern"],
+  find: ["pattern"],
+  ls: ["path"],
+};
+
+export const isReplacingCoreOverride = (name: PiCoreToolName, schema: unknown): boolean => {
+  if (!isRecord(schema) || schema.additionalProperties !== false) return false;
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  return PI_CORE_BUILTIN_KEYS[name].some((key) => !(key in properties));
+};
+
+/** Core tool names whose captured override rejects the built-in call forms. */
+export const replacedCoreOverrideNames = (
+  sources: readonly FabricCoreOverrideTypeSource[],
+): PiCoreToolName[] =>
+  PI_CORE_TOOL_NAMES.filter((name) =>
+    sources.some((source) => source.name === name && isReplacingCoreOverride(name, source.inputSchema)),
+  );
+
+// A named alias lets the 2353 diagnostic carry the tool name to the recovery hint.
+const overrideAliasFor = (name: PiCoreToolName): string =>
+  `Pi${name.charAt(0).toUpperCase()}${name.slice(1)}OverrideArgument`;
+
 const returnTypeFor = (name: PiCoreToolName): string =>
   `ReturnType<PiToolsApi["${name}"]>`;
 
@@ -330,6 +363,8 @@ export const buildCoreOverrideGuestDeclarations = (
   if (byName.size === 0) return undefined;
 
   const methods: string[] = [];
+  const aliases: string[] = [];
+  const replaced: PiCoreToolName[] = [];
   let outputChars = 0;
   for (const name of PI_CORE_TOOL_NAMES) {
     const source = byName.get(name);
@@ -347,22 +382,38 @@ export const buildCoreOverrideGuestDeclarations = (
       // A loose overload keeps override-specific calls reachable while the
       // registry still validates the effective schema at dispatch.
     }
+    const replacing = isReplacingCoreOverride(name, source.inputSchema);
     let compatibility = `Partial<${argumentType}> & (${compatibilityArgumentTypeFor(name)})`;
-    let method = `  ${name}(args${required ? "" : "?"}: ${argumentType} | (${compatibility})): ${returnTypeFor(name)};`;
-    outputChars += method.length;
+    let method = replacing
+      ? `  ${name}(args${required ? "" : "?"}: ${overrideAliasFor(name)}): ${returnTypeFor(name)};`
+      : `  ${name}(args${required ? "" : "?"}: ${argumentType} | (${compatibility})): ${returnTypeFor(name)};`;
+    outputChars += method.length + (replacing ? argumentType.length : 0);
     if (outputChars > MAX_DECLARATION_OUTPUT_CHARS) {
       argumentType = LOOSE_ARGUMENT_TYPE;
       required = false;
       compatibility = `Partial<${argumentType}> & (${compatibilityArgumentTypeFor(name)})`;
-      method = `  ${name}(args?: ${argumentType} | (${compatibility})): ${returnTypeFor(name)};`;
+      method = replacing
+        ? `  ${name}(args?: ${overrideAliasFor(name)}): ${returnTypeFor(name)};`
+        : `  ${name}(args?: ${argumentType} | (${compatibility})): ${returnTypeFor(name)};`;
+    }
+    if (replacing) {
+      replaced.push(name);
+      aliases.push(`type ${overrideAliasFor(name)} = ${argumentType};`);
     }
     methods.push(method);
   }
 
   if (methods.length === 0) return undefined;
+  const base = replaced.length > 0
+    ? `Omit<PiToolsApi, ${replaced.map((name) => JSON.stringify(name)).join(" | ")}>`
+    : "PiToolsApi";
   return [
     "// Generated from the current captured exact-name core overrides for this execution.",
-    "type FabricPiCoreOverrideApi = PiToolsApi & {",
+    ...(replaced.length > 0
+      ? [`// Replaced by a captured override; built-in forms are rejected: ${replaced.map((name) => `pi.${name}`).join(", ")}.`]
+      : []),
+    ...aliases,
+    `type FabricPiCoreOverrideApi = ${base} & {`,
     ...methods,
     "};",
     "declare const pi: FabricPiCoreOverrideApi;",

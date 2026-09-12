@@ -31,6 +31,7 @@ import {
 } from "./fabric-exec-arguments.js";
 import { repairFabricGuestCode } from "./runtime/guest-code-repair.js";
 import { typeErrorRecoveryHint } from "./type-error-guidance.js";
+import { replacedCoreOverrideNames } from "./runtime/core-override-guest-types.js";
 import { normalizeRunDisplay } from "./run-display.js";
 import type { PendingFabricHandoff } from "./prewalk/handoff.js";
 import type { FabricMediaBlock } from "./protocol.js";
@@ -930,7 +931,13 @@ export const createFabricExecTool = (
               : error.message,
           )
           .join("\n");
-        const recoveryHint = typeErrorRecoveryHint(code, result.typeErrors);
+        const replacedCoreTools = replacedCoreOverrideNames(
+          state.capturedTools.list().map((entry) => ({
+            name: entry.name,
+            inputSchema: entry.definition.parameters,
+          })),
+        );
+        const recoveryHint = typeErrorRecoveryHint(code, result.typeErrors, replacedCoreTools);
         const bounded = await boundModelOutput(
           `Type errors; code was not executed:\n${text}${
             recoveryHint ? `\n\n${recoveryHint}` : ""

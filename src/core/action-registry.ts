@@ -66,6 +66,28 @@ import {
   type FabricProviderBindingEvent,
 } from "./provider-bindings.js";
 
+// A captured extension may replace a core tool with its own schema, so the
+// built-in pi.<name> forms fail validation. Naming the replacement lets the
+// model switch shape in one turn instead of retrying the built-in form.
+const overrideRejectionHint = (
+  action: { ref: string; namespace?: string; description: string },
+  schema: Record<string, unknown>,
+): string => {
+  if (action.namespace !== "extension-override" || !action.ref.startsWith("pi.")) return "";
+  const properties = schema.properties;
+  const fields =
+    typeof properties === "object" && properties !== null && !Array.isArray(properties)
+      ? Object.keys(properties)
+      : [];
+  const description = action.description.replace(/\s+/g, " ").trim().slice(0, 900);
+  return (
+    ` ${action.ref} is replaced by a captured extension override, so Fabric's built-in forms are not accepted.` +
+    (fields.length > 0 ? ` Accepted fields: ${fields.join(", ")}.` : "") +
+    (description ? ` Tool description: ${description}` : "") +
+    ` Run tools.describe({ ref: "${action.ref}" }) for the full schema.`
+  );
+};
+
 export interface ResolvedFabricAction extends FabricActionDescriptor {
   ref: string;
   provider: string;
@@ -873,7 +895,9 @@ export class ActionRegistry {
           };
           context.audits.push(attempt);
         }
-        throw new FabricTraceSafeError(`Invalid arguments for ${ref}: ${catalog.invalid}`);
+        throw new FabricTraceSafeError(
+          `Invalid arguments for ${ref}: ${catalog.invalid}${overrideRejectionHint(action, effectiveSchema)}`,
+        );
       }
 
       failureStage = "approve";
