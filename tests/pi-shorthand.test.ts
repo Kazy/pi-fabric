@@ -321,6 +321,51 @@ describe("pi positional args", () => {
     expect(result.errors.some((e) => /properties in common|argument/i.test(e.message))).toBe(true);
   });
 
+  it("accepts a bare number second arg on bash/powershell as the timeout in seconds", async () => {
+    const typed = typeCheckFabricCode(
+      'const a = await pi.bash("bun test", 120);' +
+        'const b = await pi.powershell("Get-Date", 5);' +
+        'return { a: a.ok, b: b.ok };',
+      GUEST_TYPE_DECLARATIONS,
+    );
+    expect(typed.errors).toEqual([]);
+    const hostCall = vi.fn(async (_ref: string, _args: Record<string, unknown>) => ({ ok: true, output: "x", details: null }));
+    const result = await new QuickJsRuntime().execute(
+      'const a = await pi.bash("bun test", 120);' +
+        'const b = await pi.powershell("Get-Date", 5);' +
+        'return { a: a.output, b: b.output };',
+      hostCall,
+      options,
+    );
+    expect(result.error).toBeUndefined();
+    expect(hostCall.mock.calls[0]?.[0]).toBe("pi.bash");
+    expect(hostCall.mock.calls[0]?.[1]).toEqual({ command: "bun test", timeout: 120 });
+    expect(hostCall.mock.calls[1]?.[0]).toBe("pi.powershell");
+    expect(hostCall.mock.calls[1]?.[1]).toEqual({ command: "Get-Date", timeout: 5 });
+  });
+
+  it("still type-rejects a number second arg on read/ls and a string second arg on bash", () => {
+    for (const code of [
+      'await pi.read("/x", 10); return 1;',
+      'await pi.ls("src", 10); return 1;',
+      'await pi.bash("ls", "30"); return 1;',
+    ]) {
+      const result = typeCheckFabricCode(code, GUEST_TYPE_DECLARATIONS);
+      expect(result.errors.length, code).toBeGreaterThan(0);
+    }
+  });
+
+  it("does not turn a number second arg on read into a positional field at runtime", async () => {
+    const hostCall = vi.fn(async (_ref: string, _args: Record<string, unknown>) => "r");
+    const result = await new QuickJsRuntime().execute(
+      'const a = await pi.read("/x", 10); return a;',
+      hostCall,
+      options,
+    );
+    expect(result.error).toBeUndefined();
+    expect(hostCall.mock.calls[0]?.[1]).toEqual({ path: "/x" });
+  });
+
   it("type-checks two-arg (primary, options) calls for string-primary tools", () => {
     const result = typeCheckFabricCode(
       'const a = await pi.read("index.ts", { limit: 120 });' +
