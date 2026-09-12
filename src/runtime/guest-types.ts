@@ -54,6 +54,16 @@ interface FabricAction {
   namespace?: string;
   effect?: FabricActionEffect;
 }
+// tools.list() drops schemas; pass { schemas: true } or call tools.describe.
+interface FabricActionSummary {
+  ref: string;
+  provider: string;
+  name: string;
+  description: string;
+  risk: "read" | "write" | "execute" | "network" | "agent";
+  namespace?: string;
+  effect?: FabricActionEffect;
+}
 interface FabricAgentRequest {
   /** Omitted/inherit uses caller executor.kernel; concrete choices require Pi with extensions. */
   kernel?: FabricKernel | "inherit";
@@ -386,10 +396,10 @@ interface FabricCapabilityCatalog {
   complete: boolean;
   reasons: string[];
 }
-interface FabricActionListEnvelope {
+interface FabricActionListEnvelope<A = FabricAction> {
   kind: "pi-fabric.action-list";
   version: 1;
-  actions: FabricAction[];
+  actions: A[];
   /** Full visible-action count before paging. */
   total: number;
   /** True when total exceeds the returned page: more actions exist. */
@@ -420,7 +430,10 @@ interface FabricToolsApi {
    * 1000). A short result never proves an action is absent — confirm with
    * search() or pass envelope: true to get totals and a truncated flag.
    */
-  list(args?: { provider?: string; namespace?: string; query?: string; limit?: number; envelope?: boolean }): Promise<FabricAction[] | FabricActionListEnvelope>;
+  list(args: { provider?: string; namespace?: string; query?: string; limit?: number; schemas: true; envelope: true }): Promise<FabricActionListEnvelope<FabricAction>>;
+  list(args: { provider?: string; namespace?: string; query?: string; limit?: number; schemas?: false; envelope: true }): Promise<FabricActionListEnvelope<FabricActionSummary>>;
+  list(args: { provider?: string; namespace?: string; query?: string; limit?: number; schemas: true; envelope?: false }): Promise<FabricAction[]>;
+  list(args?: { provider?: string; namespace?: string; query?: string; limit?: number; schemas?: false; envelope?: false }): Promise<FabricActionSummary[]>;
   search(args: { query: string; limit?: number; searchMode?: "lexical" | "semantic" }): Promise<FabricAction[] | FabricActionSearchEnvelope>;
   describe(args: { ref: string }): Promise<FabricAction>;
   call(args: { ref: string; args?: Record<string, unknown> }): Promise<unknown>;
