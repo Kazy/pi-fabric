@@ -216,6 +216,34 @@ const __piEnvelopeGuard = (name, value) => {
     },
   });
 };
+// pi.* resolves asynchronously; a program that skips await then calls
+// .slice/.split/.output on the promise itself and dies with QuickJS's
+// context-free "not a function" (lenient type check suppresses the
+// property miss). Trap those names on the promise and name the missing
+// await. Promise methods are bound to the real promise: they reject a Proxy
+// receiver, and await/Promise.all reach them through the proxy.
+const __piAwaitTraps = new Set([
+  ...__piEnvelopeStringTraps,
+  "ok", "output", "details", "exitCode", "error",
+  "map", "filter", "forEach", "join", "some", "every", "find", "reduce", "flat", "flatMap",
+]);
+const __piAwaitGuard = (name, promise) => new Proxy(promise, {
+  get(target, property) {
+    if (property === Symbol.iterator || property === Symbol.asyncIterator) {
+      throw new TypeError(
+        "pi." + name + "(...) returns a Promise, which is not iterable. Add await first: const r = await pi." + name + "(...)."
+      );
+    }
+    if (typeof property === "string" && __piAwaitTraps.has(property)) {
+      throw new TypeError(
+        "pi." + name + "(...) returns a Promise, so ." + property + " is unavailable until it is awaited. " +
+        "Add await: const r = await pi." + name + "(...); then r." + property + "."
+      );
+    }
+    const value = Reflect.get(target, property, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+});
 // The pi proxy accepts: a bare string (primary field), an options object, a
 // (primary, options) two-arg merge for the string-primary tools, or a
 // positional spread mapped by __piPositionalFields. 0/1 args preserve the
@@ -251,9 +279,10 @@ globalThis.pi = new Proxy({}, {
           error: message,
         };
       }) : call;
-      return __piEnvelopeTools[name] === true
+      const settled = __piEnvelopeTools[name] === true
         ? promise.then((value) => __piEnvelopeGuard(name, value))
         : promise;
+      return __piAwaitGuard(name, settled);
     };
   },
 });

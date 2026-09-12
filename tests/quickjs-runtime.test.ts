@@ -1222,6 +1222,88 @@ return "never";
     expect(result.error).toContain(".output");
   });
 
+  it("names the missing await when a string method is called on a pi.read promise", async () => {
+    const hostCall = vi.fn(async () => "hello");
+    const result = await new QuickJsRuntime().execute(
+      `
+const s = pi.read("x");
+return s.slice(0, 2);
+`,
+      hostCall,
+      options,
+    );
+    expect(result.error).toContain("await");
+    expect(result.error).toContain("pi.read");
+    expect(result.error).toContain(".slice");
+  });
+
+  it("names the missing await when .output is read from a pi.bash promise", async () => {
+    const hostCall = vi.fn(async () => ({ ok: true, output: "x", details: null }));
+    const result = await new QuickJsRuntime().execute(
+      `
+const r = pi.bash("echo x");
+return r.output;
+`,
+      hostCall,
+      options,
+    );
+    expect(result.error).toContain("await");
+    expect(result.error).toContain("pi.bash");
+    expect(result.error).toContain(".output");
+  });
+
+  it("rejects iteration over an un-awaited pi.find promise with an await hint", async () => {
+    const hostCall = vi.fn(async () => "a\\nb");
+    const result = await new QuickJsRuntime().execute(
+      `
+const files = pi.find("*.ts");
+return [...files];
+`,
+      hostCall,
+      options,
+    );
+    expect(result.error).toContain("not iterable");
+    expect(result.error).toContain("await");
+  });
+
+  it("keeps await, Promise.all, then, and catch working through the await guard", async () => {
+    const hostCall = vi.fn(async (_ref: string, args: Record<string, unknown>) => {
+      if (args.path === "missing") throw new Error("ENOENT missing");
+      return `content:${String(args.path)}`;
+    });
+    const result = await new QuickJsRuntime().execute(
+      `
+const [a, b] = await Promise.all([pi.read("a"), pi.read("b")]);
+const upper = await pi.read("c").then((s) => s.toUpperCase());
+const fallback = await pi.read("missing").catch((error) => "fallback:" + error.message);
+const settled = await Promise.allSettled([pi.read("missing")]);
+return { a, b, upper, fallback, status: settled[0].status, isPromise: pi.read("d") instanceof Promise };
+`,
+      hostCall,
+      options,
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.value).toEqual({
+      a: "content:a",
+      b: "content:b",
+      upper: "CONTENT:C",
+      fallback: "fallback:ENOENT missing",
+      status: "rejected",
+      isPromise: true,
+    });
+  });
+
+  it("still applies the envelope guard after the promise is awaited", async () => {
+    const hostCall = vi.fn(async () => ({ ok: true, output: " x ", details: null }));
+    const result = await new QuickJsRuntime().execute(
+      `return (await pi.bash("echo x")).trim();`,
+      hostCall,
+      options,
+    );
+    expect(result.error).toContain("envelope");
+    expect(result.error).toContain(".output");
+  });
+
   it("guards settled bash envelopes and still exposes ok/exitCode/output reads", async () => {
     const hostCall = vi.fn(async () => {
       throw classifyPiBashError(new Error("sync-spawn\n\nCommand exited with code 3"));
