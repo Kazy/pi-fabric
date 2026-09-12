@@ -321,6 +321,43 @@ describe("pi positional args", () => {
     expect(result.errors.some((e) => /properties in common|argument/i.test(e.message))).toBe(true);
   });
 
+  it("merges a trailing options object on positional grep/find calls", async () => {
+    const typed = typeCheckFabricCode(
+      'const a = await pi.grep("TODO", "src", { limit: 5, ignoreCase: true });' +
+        'const b = await pi.find("*.ts", "src", {});' +
+        'return { a, b };',
+      GUEST_TYPE_DECLARATIONS,
+    );
+    expect(typed.errors).toEqual([]);
+    const hostCall = vi.fn(async (_ref: string, _args: Record<string, unknown>) => "x");
+    const result = await new QuickJsRuntime().execute(
+      'const a = await pi.grep("TODO", "src", { limit: 5, ignoreCase: true });' +
+        'const b = await pi.find("*.ts", "src", {});' +
+        'const c = await pi.grep("TODO", "src", 7);' +
+        'const d = await pi.grep("TODO", { path: "lib" });' +
+        'return { a, b, c, d };',
+      hostCall,
+      options,
+    );
+    expect(result.error).toBeUndefined();
+    expect(hostCall.mock.calls[0]?.[1]).toEqual({ pattern: "TODO", path: "src", limit: 5, ignoreCase: true });
+    expect(hostCall.mock.calls[1]?.[1]).toEqual({ pattern: "*.ts", path: "src" });
+    expect(hostCall.mock.calls[2]?.[1]).toEqual({ pattern: "TODO", path: "src", limit: 7 });
+    expect(hostCall.mock.calls[3]?.[1]).toEqual({ pattern: "TODO", path: "lib" });
+  });
+
+  it("does not treat an object third arg as options for write or edit positional calls", async () => {
+    const hostCall = vi.fn(async (_ref: string, _args: Record<string, unknown>) => ({ ok: true, output: "w", details: null }));
+    const result = await new QuickJsRuntime().execute(
+      'return await pi.write("/x", { text: "nope" } as unknown as string);',
+      hostCall,
+      options,
+    );
+    expect(result.error).toBeUndefined();
+    expect(hostCall.mock.calls[0]?.[1]).toEqual({ path: "/x", content: { text: "nope" } });
+  });
+
+
   it("accepts a bare number second arg on bash/powershell as the timeout in seconds", async () => {
     const typed = typeCheckFabricCode(
       'const a = await pi.bash("bun test", 120);' +
