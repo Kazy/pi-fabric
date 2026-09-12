@@ -416,11 +416,11 @@ export class FabricExecutionService {
     // language rather than silently changing Python programs into TypeScript.
     const runtimeKind = python
       ? monty ? "python:monty" : `python:${this.config.executor.cpython.binary}:${enforce}`
-      : `typescript:${enforce ? "quickjs" : this.config.executor.runtime}`;
+      : `typescript:${enforce ? "quickjs" : this.config.executor.runtime}:${this.config.executor.typeCheck}`;
     // CPython and the Node/Bun processes reach the OS directly, so only QuickJS
     // and Monty can vouch that no effect bypassed the bridge. Decide from the
     // runtime this call actually runs on.
-    const fence = offeredFence && (runtimeKind === "python:monty" || runtimeKind === "typescript:quickjs") ? offeredFence : undefined;
+    const fence = offeredFence && (runtimeKind === "python:monty" || runtimeKind.startsWith("typescript:quickjs:")) ? offeredFence : undefined;
     let fenceArm: Promise<void> | undefined;
     // One durable mark per execution; a failed mark keeps failing every effect.
     // A journaled run never arms: recovery resumes from its journal instead.
@@ -436,7 +436,10 @@ export class FabricExecutionService {
         runtime = new CPythonRuntime(this.config.executor.cpython.binary, enforce);
       } else {
         const { TypeScriptKernelRuntime } = await import("./runtime/typescript-kernel.js");
-        runtime = new TypeScriptKernelRuntime(enforce ? "quickjs" : this.config.executor.runtime);
+        runtime = new TypeScriptKernelRuntime(
+          enforce ? "quickjs" : this.config.executor.runtime,
+          this.config.executor.typeCheck,
+        );
       }
       this.#runtime = runtime;
       this.#runtimeKind = runtimeKind;

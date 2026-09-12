@@ -56,6 +56,7 @@ type FabricToolDisplayMode = "full" | "compact";
 export type FabricResultFormat = "auto" | "yaml" | "json" | "text";
 export type FabricPrewalkMode = "in-place" | "trajectory";
 export type FabricExecutorRuntime = "quickjs" | "node-process" | "bun-process";
+export type FabricTypeCheckMode = "lenient" | "strict";
 export type FabricConfigScope = "global" | "project";
 type FabricCompactionEngine = "pi" | "fabric";
 type FabricActorScope = "project" | "session";
@@ -76,6 +77,9 @@ interface FabricExecutorConfig {
   runtime: FabricExecutorRuntime;
   /** Add native tool aliases, or opt into Pi's script-level naming/result ergonomics. */
   codemodeProfile: "additive" | "native";
+  /** TypeScript only. "strict" rejects property misses on guest results before
+   * execution; "lenient" defers them to runtime dispatch. */
+  typeCheck: FabricTypeCheckMode;
   timeoutMs: number;
   /** Policy maximum for any executor deadline, including per-invocation
    * requests and per-ref floors. Values above this are visibly normalized. */
@@ -517,6 +521,7 @@ export const DEFAULT_FABRIC_CONFIG: FabricConfig = {
     jevFabric: { binary: "", home: "", timeoutMs: 3_600_000 },
     runtime: "quickjs",
     codemodeProfile: "additive",
+    typeCheck: "lenient",
     timeoutMs: 120_000,
     maxTimeoutMs: 900_000,
     maxCpuSliceMs: 0,
@@ -845,6 +850,11 @@ const executorRuntimeValue = (
 ): FabricExecutorRuntime =>
   value === "quickjs" || value === "node-process" || value === "bun-process" ? value : fallback;
 
+const typeCheckModeValue = (
+  value: unknown,
+  fallback: FabricTypeCheckMode,
+): FabricTypeCheckMode => value === "lenient" || value === "strict" ? value : fallback;
+
 const resultFormatValue = (
   value: unknown,
   fallback: FabricResultFormat,
@@ -1151,6 +1161,10 @@ export const normalizeFabricConfig = (input: Record<string, unknown>): FabricCon
       resultFormat: resultFormatValue(
         executor.resultFormat,
         DEFAULT_FABRIC_CONFIG.executor.resultFormat,
+      ),
+      typeCheck: typeCheckModeValue(
+        executor.typeCheck,
+        DEFAULT_FABRIC_CONFIG.executor.typeCheck,
       ),
     },
     approvals: {
