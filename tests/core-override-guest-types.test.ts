@@ -2,6 +2,8 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import {
   buildCoreOverrideGuestDeclarations,
+  isReplacingCoreOverride,
+  replacedCoreOverrideNames,
   type FabricCoreOverrideTypeSource,
 } from "../src/runtime/core-override-guest-types.js";
 import { GUEST_TYPE_DECLARATIONS, guestTypeDeclarations } from "../src/runtime/guest-types.js";
@@ -52,6 +54,52 @@ return { shorthand, builtin, text };
     );
     expect(misspelled.errors.length).toBeGreaterThan(0);
   });
+
+  it("drops the built-in forms for a replacing override and keeps the other tools intact", () => {
+    const schema = Type.Object(
+      { input: Type.Optional(Type.String()), text: Type.Optional(Type.String()) },
+      { additionalProperties: false },
+    );
+    expect(isReplacingCoreOverride("edit", schema)).toBe(true);
+    expect(isReplacingCoreOverride("edit", Type.Object({ path: Type.String() }, { additionalProperties: false }))).toBe(false);
+    expect(isReplacingCoreOverride("edit", Type.Object({ text: Type.String() }))).toBe(false);
+    expect(replacedCoreOverrideNames([{ name: "edit", inputSchema: schema }, { name: "read", inputSchema: Type.Object({ path: Type.String() }) }])).toEqual(["edit"]);
+
+    const declarations = declarationsFor({ name: "edit", inputSchema: schema });
+    expect(declarations).toContain('Omit<PiToolsApi, "edit">');
+    expect(declarations).toContain("type PiEditOverrideArgument =");
+
+    const accepted = typeCheckFabricCode(
+      `
+const a = await pi.edit({ text: "[x]\\n@APPEND\\n+line" });
+const b = await pi.edit({ input: "[x#ABCD]\\nINS.TAIL:\\n+line" });
+const out: string = a.output + b.output;
+const readText: string = await pi.read("src/index.ts");
+const writeOut: string = (await pi.write("src/index.ts", "content")).output;
+return { out, readText, writeOut };
+`,
+      declarations,
+    );
+    expect(accepted.errors).toEqual([]);
+
+    const positional = typeCheckFabricCode('await pi.edit("/x", "old", "new"); return 1;', declarations);
+    expect(positional.errors.some((e) => /Expected \d+(-\d+)? arguments?, but got 3/.test(e.message))).toBe(true);
+
+    const builtinObject = typeCheckFabricCode('await pi.edit({ path: "/x", oldText: "a", newText: "b" }); return 1;', declarations);
+    expect(builtinObject.errors.some((e) => /'path' does not exist in type 'PiEditOverrideArgument'/.test(e.message))).toBe(true);
+
+    const editsArray = typeCheckFabricCode('await pi.edit({ path: "/x", edits: [{ oldText: "a", newText: "b" }] }); return 1;', declarations);
+    expect(editsArray.errors.length).toBeGreaterThan(0);
+  });
+
+  it("treats a write override without content as replacing, because the positional form cannot reach it", () => {
+    const schema = Type.Object({ path: Type.String(), text: Type.String() }, { additionalProperties: false });
+    expect(isReplacingCoreOverride("write", schema)).toBe(true);
+    const declarations = declarationsFor({ name: "write", inputSchema: schema });
+    expect(typeCheckFabricCode('await pi.write({ path: "/x", text: "c" }); return 1;', declarations).errors).toEqual([]);
+    expect(typeCheckFabricCode('await pi.write("/x", "c"); return 1;', declarations).errors.length).toBeGreaterThan(0);
+  });
+
 
   it("retains every built-in core call form alongside an additive override", () => {
     const declarations = declarationsFor({

@@ -120,6 +120,61 @@ describe("captured core overrides through Fabric execution", () => {
     } finally { catalog.clear(); rmTempSync(cwd); }
   });
 
+  it("names a replacing edit override and its fields when the built-in shape reaches validation", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fabric-core-edit-replaced-"));
+    const calls: Array<Record<string, unknown>> = [];
+    const override = makeOverride(
+      "edit",
+      Type.Object({ input: Type.Optional(Type.String()), text: Type.Optional(Type.String()) }, { additionalProperties: false }),
+      calls,
+      "merge-edit",
+    );
+    override.definition.description = "Edit files with a row script. Pass exactly one of text or input.";
+    const { catalog, service } = setup(cwd, [override]);
+    try {
+      // tools.call skips the guest type check, so the registry rejection is exercised directly.
+      const result = await service.execute({
+        code: 'return tools.call({ ref: "pi.edit", args: { path: "/x", oldText: "a", newText: "b" } });',
+        signal: undefined,
+        parentToolCallId: "core-edit-replaced",
+        context: makeContext(cwd),
+        onPartial() {},
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Invalid arguments for pi.edit");
+      expect(result.error).toContain("pi.edit is replaced by a captured extension override");
+      expect(result.error).toContain("Accepted fields: input, text");
+      expect(result.error).toContain("Pass exactly one of text or input");
+      // The guest error text is JSON-escaped, so match the call without its quotes.
+      expect(result.error).toContain("Run tools.describe(");
+      expect(calls).toEqual([]);
+    } finally { catalog.clear(); rmTempSync(cwd); }
+  });
+
+  it("rejects the positional edit form at type check when the override replaces the slot", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fabric-core-edit-replaced-types-"));
+    const calls: Array<Record<string, unknown>> = [];
+    const override = makeOverride(
+      "edit",
+      Type.Object({ input: Type.Optional(Type.String()), text: Type.Optional(Type.String()) }, { additionalProperties: false }),
+      calls,
+    );
+    const { catalog, service } = setup(cwd, [override]);
+    try {
+      const result = await service.execute({
+        code: 'return pi.edit("/x", "old", "new");',
+        signal: undefined,
+        parentToolCallId: "core-edit-replaced-types",
+        context: makeContext(cwd),
+        onPartial() {},
+      });
+      expect(result.success).toBe(false);
+      expect(result.typeErrors?.length ?? 0).toBeGreaterThan(0);
+      expect(calls).toEqual([]);
+    } finally { catalog.clear(); rmTempSync(cwd); }
+  });
+
+
   it("fails closed instead of bypassing a bash override that does not support cwd", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fabric-core-bash-cwd-"));
     const calls: Array<Record<string, unknown>> = [];
