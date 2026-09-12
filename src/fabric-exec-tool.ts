@@ -38,6 +38,7 @@ import {
   fabricRepeatBlockText,
   fabricRepeatWarnText,
 } from "./repeat-guard.js";
+import { readOnlyShellNotes } from "./core/read-only-shell.js";
 import { normalizeRunDisplay } from "./run-display.js";
 import type { PendingFabricHandoff } from "./prewalk/handoff.js";
 import type { FabricMediaBlock } from "./protocol.js";
@@ -924,11 +925,13 @@ export const createFabricExecTool = (
       }
       const fullFormattedValue = formatFabricValue(result.value, selectedResultFormat);
       const failureProgress = formatFailureProgress(result.trace);
+      const shellNotes = readOnlyShellNotes(result.audits);
       const fullSections = [...result.logs];
       if (fullFormattedValue.text) fullSections.push(fullFormattedValue.text);
       if (result.error) fullSections.push(`Runtime error: ${result.error}`);
       if (failureProgress) fullSections.push(failureProgress);
       if (repeat.warn) fullSections.push(fabricRepeatWarnText(repeat.count, FABRIC_REPEAT_BLOCK));
+      if (shellNotes) fullSections.push(shellNotes);
       const fullRawOutput = fullSections.join("\n\n");
       const outputBudget = modelOutputBudget(
         Math.min(state.config.executor.maxOutputChars, (params.maxOutputTokens ?? params.max_output_tokens ?? Infinity) * 4),
@@ -948,6 +951,7 @@ export const createFabricExecTool = (
       if (result.error) sections.push(`Runtime error: ${result.error}`);
       if (failureProgress) sections.push(failureProgress);
       if (repeat.warn) sections.push(fabricRepeatWarnText(repeat.count, FABRIC_REPEAT_BLOCK));
+      if (shellNotes) sections.push(shellNotes);
       const rawOutput = sections.join("\n\n");
       const outputFormat =
         formattedValue.language &&
