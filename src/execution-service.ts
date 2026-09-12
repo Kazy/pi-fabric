@@ -48,6 +48,7 @@ import type {
   FabricSandboxResult,
   FabricSandboxTerminationReason,
 } from "./runtime/kernel.js";
+import type { FabricPriorCall } from "./runtime/kernel.js";
 import type { TypeScriptKernelRuntime } from "./runtime/typescript-kernel.js";
 import type { FabricTypeError, FabricTypeCheckResult } from "./runtime/type-checker.js";
 
@@ -87,6 +88,8 @@ const aggregateUsage = (usages: Usage[]): Usage => ({
   },
 });
 
+const MAX_PRIOR_CALLS = 32;
+
 export interface FabricExecutionResult {
   success: boolean;
   kernel?: FabricKernel;
@@ -98,6 +101,8 @@ export interface FabricExecutionResult {
   elapsedMs: number;
   typeErrors?: FabricTypeError[];
   error?: string;
+  /** Nested results parked for the next program's `prior` after a failure. */
+  parkedPriorCalls?: number;
   handoffRequest?: Record<string, unknown>;
   usage?: Usage;
 }
@@ -132,6 +137,10 @@ export class FabricExecutionService {
   #runtime: FabricKernelRuntime | undefined;
   #runtimeKind: string | undefined;
   #capabilityView: FabricCommittedCapabilityView | undefined;
+  // Results of the nested calls that completed before the last failed program.
+  // Read by the next program as `prior`; consumed when that program starts to
+  // run, so a type-check failure in between keeps them.
+  #prior: FabricPriorCall[] = [];
   constructor(
     readonly registry: ActionRegistry,
     readonly config: FabricConfig,
@@ -214,6 +223,7 @@ export class FabricExecutionService {
         [...unavailable.keys()],
         guestTypeSources,
         coreOverrides,
+        this.#prior,
       ));
     }
     if (checked.errors.length > 0) {
@@ -511,11 +521,31 @@ export class FabricExecutionService {
         observeInvocation,
       });
     };
+    const priorForRun = this.#prior;
+    this.#prior = [];
+    const parked: FabricPriorCall[] = [];
+    const parkCompleted = (ref: string, args: Record<string, unknown>, value: unknown): void => {
+      if (value === undefined || parked.length >= MAX_PRIOR_CALLS) return;
+      // Discovery answers are cheap to recompute; a generic call parks under
+      // the action it resolved so the next program names the real ref.
+      if (ref.startsWith("fabric.$") && ref !== "fabric.$call") return;
+      if (ref === "fabric.$call" && typeof args.ref === "string") {
+        const inner = args.args;
+        parked.push({
+          ref: args.ref,
+          args: typeof inner === "object" && inner !== null && !Array.isArray(inner) ? (inner as Record<string, unknown>) : {},
+          result: value,
+        });
+        return;
+      }
+      parked.push({ ref, args, result: value });
+    };
     let sandboxResult: FabricSandboxResult;
     try {
       sandboxResult = await runtime.execute(
         code,
         async (ref, args, runtimeSignal) => {
+          const value = await (async (): Promise<unknown> => {
           const callContext = { ...baseContext, signal: runtimeSignal };
           switch (ref) {
             case "fabric.$providers":
@@ -765,6 +795,9 @@ export class FabricExecutionService {
             default:
               return invokeAction(ref, args, callContext);
           }
+          })();
+          parkCompleted(ref, args, value);
+          return value;
         },
         {
           timeoutMs: effectiveTimeoutMs,
@@ -776,6 +809,7 @@ export class FabricExecutionService {
           ...(checked.javascript ? { transpiledCode: checked.javascript } : {}),
           ...(checked.sourceMap ? { transpiledSourceMap: checked.sourceMap } : {}),
           ...(options.strings ? { strings: options.strings } : {}),
+          ...(!python ? { prior: priorForRun } : {}),
           ...(options.tokenBudget !== undefined ? { tokenBudget: options.tokenBudget } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
         },
@@ -795,6 +829,7 @@ export class FabricExecutionService {
     }
     const runOutcome = executionOutcomeFromTermination(sandboxResult.terminationReason);
     const succeeded = runOutcome === "succeeded";
+    if (!succeeded && !python && parked.length > 0) this.#prior = parked;
     this.activity?.finish(options.parentToolCallId, succeeded, sandboxResult.error);
     return {
       success: succeeded,
@@ -808,6 +843,7 @@ export class FabricExecutionService {
       trace: traceRecorder.seal(runOutcome, phases),
       elapsedMs: performance.now() - startedAt,
       ...(sandboxResult.error ? { error: sandboxResult.error } : {}),
+      ...(this.#prior.length > 0 ? { parkedPriorCalls: this.#prior.length } : {}),
       ...(handoffRequest ? { handoffRequest } : {}),
       ...(classifierUsages.length > 0
         ? { usage: aggregateUsage(classifierUsages) }

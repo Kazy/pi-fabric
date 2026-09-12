@@ -188,7 +188,7 @@ export const createFabricExecTool = (
           ? monty
             ? "Python async function body executed by Monty, a sandboxed Python subset (not CPython). Top-level await/return and asyncio.gather are supported. Use only Monty's supported syntax/modules; native imports, filesystem, network, and environment are unavailable. Host globals: tools, mcp, memory, state, schema, compact, components, agents, mesh; full-code mode adds pi and extensions. Await dict/keyword calls; use native dict results r['output']. Payloads: π.key or payloads['key']. Return JSON-compatible data; each invocation starts fresh."
             : "Python async function body executed by CPython. Top-level await and return are supported; standard-library imports are available. Globals: tools, mcp, memory, state, schema, compact, components, agents, mesh; full-code mode adds pi and extensions. Await host calls using a dict or keyword arguments. Results are native dicts/lists: r['output'], not r.output. Use asyncio.gather for concurrency. Named payloads are π.key or payloads['key']. Return a JSON-compatible value. Each call starts fresh."
-          : "TypeScript function body. Top-level await and return are supported. Globals include `tools`, `mcp`, `memory`, `state`, `schema`, `compact`, `agents`, `mesh`, `print`, and `π`; full-code mode adds `pi` and `extensions`. Only the `return` value reaches the model; `print` goes to the activity log. Await every `pi.*` call; `pi.bash(cmd, seconds)` sets the shell timeout. For a wildcard directory, search from its parent with `glob` set to the wildcard path, e.g. `pi.grep({ pattern, path: '~/.cargo/registry/src', glob: 'aead-0.6*/src/*.rs', limit: 20 })`. `π` contains only the exact keys supplied by this call's `payloads`. See session guidance / `fabric-exec` skill for exact signatures.",
+          : "TypeScript function body. Top-level await and return are supported. Globals include `tools`, `mcp`, `memory`, `state`, `schema`, `compact`, `agents`, `mesh`, `print`, and `π`; full-code mode adds `pi` and `extensions`. Only the `return` value reaches the model; `print` goes to the activity log. Await every `pi.*` call; `pi.bash(cmd, seconds)` sets the shell timeout. For a wildcard directory, search from its parent with `glob` set to the wildcard path, e.g. `pi.grep({ pattern, path: '~/.cargo/registry/src', glob: 'aead-0.6*/src/*.rs', limit: 20 })`. `π` contains only the exact keys supplied by this call's `payloads`. After a failed program, `prior.get(ref, args)` returns a completed nested result instead of calling it again. See session guidance / `fabric-exec` skill for exact signatures.",
       }),
       payloads: Type.Optional(
         Type.Record(Type.String(), Type.String(), {
@@ -876,7 +876,7 @@ export const createFabricExecTool = (
         );
       }
       const fullFormattedValue = formatFabricValue(result.value, selectedResultFormat);
-      const failureProgress = formatFailureProgress(result.trace);
+      const failureProgress = formatFailureProgress(result.trace, result.parkedPriorCalls);
       const shellNotes = readOnlyShellNotes(result.audits);
       const fullSections = [...result.logs];
       if (fullFormattedValue.text) fullSections.push(fullFormattedValue.text);

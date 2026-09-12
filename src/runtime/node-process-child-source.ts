@@ -61,6 +61,7 @@ const run = async (message) => {
     __fabricTokenBudget: message.tokenBudget ?? Number.POSITIVE_INFINITY,
     print,
     π: jsonCompatible(message.strings),
+    __fabricPrior: jsonCompatible(message.prior ?? []),
   };
   const context = vm.createContext(sandbox, {
     name: "pi-fabric-node-process",

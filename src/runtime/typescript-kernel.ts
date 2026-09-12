@@ -8,6 +8,8 @@ import { typeCheckFabricCode } from "./type-checker.js";
 import { guestTypeDeclarations } from "./guest-types.js";
 import { buildDynamicGuestDeclarations } from "./dynamic-guest-types.js";
 import { buildCoreOverrideGuestDeclarations, type FabricCoreOverrideTypeSource } from "./core-override-guest-types.js";
+import { buildPriorGuestDeclarations } from "./prior-guest-types.js";
+import type { FabricPriorCall } from "./kernel.js";
 
 // TypeScript is one kernel, with several JavaScript execution engines.
 // Keep compiler and guest declaration dependencies behind this lazy boundary.
@@ -30,6 +32,7 @@ export class TypeScriptKernelRuntime implements FabricKernelRuntime {
     unavailable: string[],
     sources: FabricGuestTypeSources,
     overrides: FabricCoreOverrideTypeSource[],
+    prior: readonly FabricPriorCall[] = [],
   ) {
     const code = repairFabricGuestCode(source);
     const coreOverrides = fullCodeMode
@@ -39,6 +42,7 @@ export class TypeScriptKernelRuntime implements FabricKernelRuntime {
       excludeGlobals: unavailable,
       dynamic: buildDynamicGuestDeclarations(sources),
       ...(coreOverrides ? { coreOverrides } : {}),
+      prior: buildPriorGuestDeclarations(prior),
     }), this.#typeCheck);
     return { code, checked };
   }

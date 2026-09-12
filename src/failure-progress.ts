@@ -11,6 +11,7 @@ const compactPath = (value: string): string => {
 
 export const formatFailureProgress = (
   trace: FabricExecutionTraceV1,
+  parkedPriorCalls = 0,
 ): string | undefined => {
   if (trace.outcome === "succeeded") return undefined;
   const completed = trace.operations.filter(
@@ -24,10 +25,14 @@ export const formatFailureProgress = (
       : operation.ref;
   });
   const omitted = completed.length - summaries.length;
+  const parkedNote = parkedPriorCalls > 0
+    ? `Their results are parked: in your next fabric_exec program read \`prior.get(ref, args)\` or \`prior.calls[i].result\` (typed from the parked values, cleared when that program runs) instead of calling them again.`
+    : undefined;
   return [
     `Completed before the outer failure (outputs not returned): ${summaries.join("; ")}${
       omitted > 0 ? `; +${omitted} more` : ""
     }.`,
+    ...(parkedNote ? [parkedNote] : []),
     "Successful calls may already have changed the workspace; inspect before repeating mutations.",
   ].join("\n");
 };

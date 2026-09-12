@@ -37,6 +37,17 @@ return { models, process: typeof process, require: typeof require };
     });
   });
 
+  it("exposes parked prior results in the child process", async () => {
+    const result = await new NodeProcessRuntime().execute(
+      'return { a: prior.get("pi.read", { path: "a" }), n: prior.calls.length };',
+      async () => undefined,
+      { ...options, prior: [{ ref: "pi.read", args: { path: "a" }, result: "A" }] },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.value).toEqual({ a: "A", n: 1 });
+  });
+
+
   it("normalizes the string shorthand for tools.search", async () => {
     const result = await new NodeProcessRuntime().execute(
       'return tools.search("fovea");',

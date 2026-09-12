@@ -14,11 +14,20 @@ export interface FabricSandboxResult {
   error?: string;
 }
 
+/** A nested call whose result was parked when the previous program failed. */
+export interface FabricPriorCall {
+  ref: string;
+  args: Record<string, unknown>;
+  result: unknown;
+}
+
 export interface FabricSandboxOptions {
   timeoutMs: number;
   memoryLimitBytes: number;
   maxLogChars?: number;
   strings?: Record<string, string>;
+  /** Exposed to the guest as `prior`; TypeScript kernel only. */
+  prior?: readonly FabricPriorCall[];
   tokenBudget?: number;
   signal?: AbortSignal;
   cwd?: string;

@@ -1293,6 +1293,45 @@ return { a, b, upper, fallback, status: settled[0].status, isPromise: pi.read("d
     });
   });
 
+  it("exposes parked prior results by ref and canonical args", async () => {
+    const prior = [
+      { ref: "pi.read", args: { path: "a" }, result: "A" },
+      { ref: "demo.echo", args: { b: 2, a: 1 }, result: { ok: 1 } },
+      { ref: "demo.echo", args: { a: 9 }, result: { ok: 9 } },
+    ];
+    const result = await new QuickJsRuntime().execute(
+      `
+const byRef = prior.get("pi.read");
+const reordered = prior.get("demo.echo", { a: 1, b: 2 });
+let ambiguous = "";
+try { prior.get("demo.echo"); } catch (error) { ambiguous = error.message; }
+let missing = "";
+try { prior.get("pi.grep", { pattern: "x" }); } catch (error) { missing = error.message; }
+let frozen = false;
+try { prior.calls = []; } catch { frozen = true; }
+return { byRef, reordered, ambiguous, missing, frozen: frozen || prior.calls.length === 3, n: prior.calls.length };
+`,
+      async () => undefined,
+      { ...options, prior },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.value).toMatchObject({ byRef: "A", reordered: { ok: 1 }, n: 3, frozen: true });
+    const value = result.value as { ambiguous: string; missing: string };
+    expect(value.ambiguous).toContain("2 parked calls match");
+    expect(value.missing).toContain("no parked call matches");
+    expect(value.missing).toContain('pi.read({"path":"a"})');
+  });
+
+  it("reports an empty store when nothing was parked", async () => {
+    const result = await new QuickJsRuntime().execute(
+      `let m = ""; try { prior.get("pi.read"); } catch (e) { m = e.message; } return { n: prior.calls.length, m };`,
+      async () => undefined,
+      options,
+    );
+    expect(result.value).toEqual({ n: 0, m: expect.stringContaining("nothing is parked") });
+  });
+
+
   it("exposes core tool names to Object.keys(pi) and the in operator", async () => {
     const hostCall = vi.fn(async () => "unused");
     const result = await new QuickJsRuntime().execute(

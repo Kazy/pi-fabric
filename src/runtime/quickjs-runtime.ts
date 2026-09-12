@@ -333,6 +333,41 @@ globalThis["π"] = new Proxy(__piStrings, {
   getOwnPropertyDescriptor(target, prop) { return Reflect.getOwnPropertyDescriptor(target, prop); },
   has(target, prop) { return Object.prototype.hasOwnProperty.call(target, prop); }
 });
+// Results parked by the previous failed execution, bounded on the host. The
+// program that reads them decides what reaches the model; nothing is returned
+// automatically. The host clears the store when this execution starts.
+const __fabricPriorCalls = Array.isArray(globalThis.__fabricPrior) ? globalThis.__fabricPrior : [];
+const __priorCanonical = (value) => {
+  if (Array.isArray(value)) return "[" + value.map(__priorCanonical).join(",") + "]";
+  if (value !== null && typeof value === "object") {
+    return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + __priorCanonical(value[key])).join(",") + "}";
+  }
+  return String(JSON.stringify(value));
+};
+const __priorLabel = (call) => call.ref + "(" + __priorCanonical(call.args) + ")";
+globalThis.prior = Object.freeze({
+  calls: __fabricPriorCalls,
+  get(ref, args) {
+    const byRef = __fabricPriorCalls.filter((call) => call.ref === ref);
+    const matches = args === undefined
+      ? byRef
+      : byRef.filter((call) => __priorCanonical(call.args) === __priorCanonical(args));
+    if (matches.length === 1) return matches[0].result;
+    const parked = __fabricPriorCalls.length === 0
+      ? "nothing is parked"
+      : "parked: " + __fabricPriorCalls.map(__priorLabel).join("; ");
+    if (matches.length === 0) {
+      throw new Error(
+        "prior.get(" + JSON.stringify(ref) + (args === undefined ? "" : ", " + __priorCanonical(args)) +
+        "): no parked call matches; " + parked + ". Parked results come from the previous failed fabric_exec program only."
+      );
+    }
+    throw new Error(
+      "prior.get(" + JSON.stringify(ref) + "): " + matches.length +
+      " parked calls match; pass the exact args or read prior.calls[i].result. " + parked
+    );
+  },
+});
 // Stable providers share a lazy dispatch proxy; the guest declarations keep
 // their known actions typed while the registry remains the runtime authority.
 // extensions' per-tool surface is additionally rendered from the captured
@@ -1052,6 +1087,9 @@ export class QuickJsRuntime {
       const strings = jsonHandle(context, jsonObject, jsonParse, options.strings ?? {});
       context.setProp(context.global, "π", strings);
       strings.dispose();
+      const priorCalls = jsonHandle(context, jsonObject, jsonParse, options.prior ?? []);
+      context.setProp(context.global, "__fabricPrior", priorCalls);
+      priorCalls.dispose();
       const tokenBudget = context.newNumber(options.tokenBudget ?? Number.POSITIVE_INFINITY);
       context.setProp(context.global, "__fabricTokenBudget", tokenBudget);
       tokenBudget.dispose();
