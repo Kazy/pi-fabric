@@ -93,6 +93,89 @@ const renderResult = (
 
 const nestedRows = (rendered: string): string[] => rendered.split("\n").slice(1);
 
+describe("registered fabric_exec result memo", () => {
+  const args = { code: 'return await pi.read("src/config.ts");' };
+  const details = {
+    success: true,
+    audits: [
+      { ref: "pi.read", provider: "pi", tool: "read", args: { path: "src/config.ts" }, success: true, result: "export const value = true;" },
+    ],
+    phases: [],
+  };
+  const resultFor = (text: string) => ({ content: [{ type: "text", text }], details });
+  const build = (
+    tool: ReturnType<typeof toolFor>,
+    result: ReturnType<typeof resultFor>,
+    context: ReturnType<typeof renderContext>,
+    options: { expanded?: boolean; partial?: boolean; theme?: Theme } = {},
+  ) => tool.renderResult!(
+    result as never,
+    { expanded: options.expanded ?? false, isPartial: options.partial ?? false },
+    options.theme ?? plainTheme,
+    { ...context, expanded: options.expanded ?? false, isPartial: options.partial ?? false } as never,
+  );
+  const text = (component: { render(width: number): string[] }) => component.render(120).join("\n");
+
+  it("hands back the same component for a repeated paint of an unchanged card", () => {
+    const tool = toolFor(stateFor("compact"));
+    const result = resultFor("outer return");
+    const context = renderContext(args);
+    const first = build(tool, result, context);
+    expect(build(tool, result, context)).toBe(first);
+    // A second card shares nothing with the first one.
+    expect(build(tool, result, renderContext(args))).not.toBe(first);
+  });
+
+  it("rebuilds when ctrl+o, the result, the theme or the display mode changes", () => {
+    const tool = toolFor(stateFor("compact"));
+    const result = resultFor("outer return");
+    const context = renderContext(args);
+    const collapsed = build(tool, result, context);
+    const expanded = build(tool, result, context, { expanded: true });
+    expect(expanded).not.toBe(collapsed);
+    expect(text(expanded)).not.toBe(text(collapsed));
+    // Toggling back must not serve the expanded component.
+    const collapsedAgain = build(tool, result, context);
+    expect(collapsedAgain).not.toBe(expanded);
+    expect(text(collapsedAgain)).toBe(text(collapsed));
+    const swappedTheme = build(tool, result, context, { theme: semanticTheme });
+    expect(swappedTheme).not.toBe(collapsedAgain);
+    expect(text(swappedTheme)).toContain("<");
+    // Compact hides the return value, so only the component identity can
+    // prove that a new result object bypasses the memo.
+    const other = build(tool, resultFor("changed"), context);
+    expect(other).not.toBe(swappedTheme);
+    expect(build(tool, resultFor("changed"), context)).not.toBe(other);
+  });
+
+  it("never memoizes partial cards", () => {
+    const tool = toolFor(stateFor("full"));
+    const result = resultFor("");
+    const context = renderContext(args);
+    const first = build(tool, result, context, { partial: true });
+    expect(build(tool, result, context, { partial: true })).not.toBe(first);
+    // The completed paint after a partial one is a fresh component too.
+    const completed = build(tool, result, context);
+    expect(completed).not.toBe(first);
+    expect(build(tool, result, context)).toBe(completed);
+  });
+
+  it("drops the memo when a nested renderer asks for a repaint", () => {
+    let repaint: (() => void) | undefined;
+    const display = {
+      observe: vi.fn((_id: string, _phase: string, invalidate: () => void) => { repaint = invalidate; }),
+    } as unknown as FabricToolDisplayController;
+    const tool = toolFor(stateFor("full"), display);
+    const result = resultFor("outer return");
+    const context = renderContext(args);
+    const first = build(tool, result, context);
+    expect(repaint).toBeDefined();
+    repaint!();
+    expect(context.invalidate).toHaveBeenCalledTimes(1);
+    expect(build(tool, result, context)).not.toBe(first);
+  });
+});
+
 describe("registered fabric_exec compact transcript rendering", () => {
   it("infers Python compact titles while preserving explicit intent and neutral fallbacks", () => {
     const state = stateFor("compact");

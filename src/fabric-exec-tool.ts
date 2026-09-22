@@ -78,7 +78,7 @@ import {
   isCoreToolAudit,
   renderCoreToolBody,
 } from "./ui/core-tool-render.js";
-import { highlightCode, observePiTheme } from "./ui/highlight.js";
+import { effectiveShikiTheme, highlightCode, observePiTheme } from "./ui/highlight.js";
 import {
   HiddenRowBorrowingComponent,
   observeResultRows,
@@ -103,6 +103,7 @@ type FabricRendererState = {
   fabricAgentPreviews?: FabricAgentPreview[];
   fabricResultRowBalance?: ResultRowBalance;
   fabricSpinner?: SpinnerTimerState;
+  fabricResultMemo?: { key: string; result: unknown; theme: unknown; component: Component };
 };
 
 type FabricToolDisplayMode = "full" | "compact";
@@ -395,6 +396,15 @@ export const createFabricExecTool = (
         delete rendererState.fabricWriteBindingsCode;
         if (renderedKernel !== recordedKernel) context.invalidate();
       }
+      // Any repaint request (highlighter readiness, theme swap, spinner)
+      // means the previous component is stale; drop the memo before Pi
+      // re-enters renderResult through this callback.
+      const requestRepaint = context.invalidate;
+      const invalidate = (): void => {
+        delete rendererState.fabricResultMemo;
+        requestRepaint();
+      };
+      context = { ...context, invalidate };
       toolDisplay?.observe(context.toolCallId, "result", context.invalidate);
       const spinner = updateSpinner(
         rendererState.fabricSpinner ??= {},
@@ -402,12 +412,49 @@ export const createFabricExecTool = (
         context.invalidate,
       );
       const rowBalance = rendererState.fabricResultRowBalance ??= {};
-      const trackRows = (component: Component): Component =>
-        observeResultRows(
+      // Expanded (app.tools.expand / ctrl+o) promotes compact cards to the
+      // full rendering; compact only governs the collapsed presentation.
+      const compact = !expanded && toolDisplayMode(state) === "compact";
+      const showAgentToolPreview = state.initialized
+        ? state.config.ui.showAgentToolPreview
+        : DEFAULT_FABRIC_CONFIG.ui.showAgentToolPreview;
+      // Ctrl+O calls setExpanded on every card in the transcript, and each
+      // call re-enters here. A completed card whose inputs did not change
+      // hands back its previous component instead of re-parsing, re-diffing
+      // and re-hashing. Partial cards animate, so they never memoize. The
+      // settings object is mutated in place on config reload, so its content
+      // is part of the key.
+      const memoKey = isPartial
+        ? undefined
+        : [
+            expanded ? "expanded" : "collapsed",
+            compact ? "compact" : "full",
+            showAgentToolPreview ? "agent-preview" : "no-agent-preview",
+            effectiveShikiTheme(),
+            context.cwd,
+            JSON.stringify(codePreviewSettings),
+          ].join("\0");
+      const memo = rendererState.fabricResultMemo;
+      if (
+        memoKey !== undefined &&
+        memo &&
+        memo.key === memoKey &&
+        memo.result === result &&
+        memo.theme === theme
+      ) {
+        return memo.component;
+      }
+      const trackRows = (component: Component): Component => {
+        const tracked = observeResultRows(
           observeAnimationRows(inheritComponentBackground(component), rendererState.fabricSpinner ??= {}),
           rowBalance,
           { expanded, isPartial },
         );
+        if (memoKey !== undefined) {
+          rendererState.fabricResultMemo = { key: memoKey, result, theme, component: tracked };
+        }
+        return tracked;
+      };
       if (isPartial) {
         rendererState.fabricCoreToolPreviews = captureFabricCoreToolPreviews(
           audits,
@@ -447,13 +494,7 @@ export const createFabricExecTool = (
       const nl = "\n";
       const allRowIndexes = (lines: string[], enabled: boolean): ReadonlySet<number> | undefined =>
         enabled ? new Set(lines.map((_line, index) => index)) : undefined;
-      // Expanded (app.tools.expand / ctrl+o) promotes compact cards to the
-      // full rendering; compact only governs the collapsed presentation.
-      const compact = !expanded && toolDisplayMode(state) === "compact";
       const corePreviewContext = { cwd: context.cwd, settings: codePreviewSettings };
-      const showAgentToolPreview = state.initialized
-        ? state.config.ui.showAgentToolPreview
-        : DEFAULT_FABRIC_CONFIG.ui.showAgentToolPreview;
 
       const renderBody = (
         audit: FabricRenderAudit,
