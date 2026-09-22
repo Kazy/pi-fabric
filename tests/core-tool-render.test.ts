@@ -847,6 +847,68 @@ describe("Fabric core tool stateful highlighting", () => {
     expect(deEmphasized).toMatch(/\x1b\[38;2;[0-9;]+mbit/);
   }, 20_000);
 
+  it("reuses the edited file across repaints and re-reads it once the file changes", async () => {
+    const { writeFileSync, utimesSync } = await import("node:fs");
+    const path = (await import("node:path")).join(dir, "repaint.html");
+    const post = [
+      "<!doctype html>",
+      "<html>",
+      "<head><script>",
+      "const state = { frame: 0 };",
+      "function draw() {",
+      "  const markerCells = 24;",
+      "}",
+      "</" + "script></head>",
+      "</html>",
+    ].join("\n");
+    const stamp = new Date("2026-01-01T00:00:00Z");
+    writeFileSync(path, post, "utf8");
+    utimesSync(path, stamp, stamp);
+    await vi.waitFor(
+      () => expect(highlightCode(`<p>${Math.random()}</p>`, "html")).not.toBeNull(),
+      { timeout: 15_000 },
+    );
+
+    const removedLine = "  for(let bit=0;bit<16;bit++){";
+    const diff = [
+      "@@ 5 @@",
+      " 5 function draw() {",
+      `-6 ${removedLine}`,
+      "+6   const markerCells = 24;",
+      " 7 }",
+    ].join("\n");
+    const call = audit("edit", {
+      args: { path },
+      success: true,
+      result: { details: { diff } },
+    });
+    const stripAnsi = (line: string) =>
+      line.replace(/\u0000PI_DIFF_[A-Z]+\u0000/g, "").replace(/\x1b\[[0-9;]*m/g, "");
+    const keywordColor = hl_dark_plus_keyword();
+    const removedColored = (): boolean => {
+      const rendered = renderCoreToolBody(call, theme, options({ expanded: true, invalidate: vi.fn() }));
+      const row = rendered!.lines.find((line) => stripAnsi(line).includes("bit<16"));
+      if (!row) return false;
+      const deEmphasized = row.replace(/\x1b\[48;2;148;62;70m/g, "").replace(/\x1b\[49m/g, "");
+      return deEmphasized.includes(`${keywordColor}for`);
+    };
+    await vi.waitFor(() => expect(removedColored()).toBe(true), { timeout: 15_000 });
+
+    // Same size and mtime: the repaint trusts the cached lines, so it does
+    // not notice that the context line no longer matches the file.
+    const mismatched = post.replace("function draw() {", "function drax() {");
+    expect(mismatched.length).toBe(post.length);
+    writeFileSync(path, mismatched, "utf8");
+    utimesSync(path, stamp, stamp);
+    expect(removedColored()).toBe(true);
+
+    // A new mtime drops the cache: the context mismatch refuses the weave
+    // and the removed keyword loses its state-derived color.
+    const later = new Date("2026-01-01T00:01:00Z");
+    utimesSync(path, later, later);
+    expect(removedColored()).toBe(false);
+  }, 20_000);
+
   it("weaves removed lines past separators and in-hunk scope openers", async () => {
     // Compact hunks arrive wrapped in "..." separator rows, and the removed
     // run is often preceded by context lines that open a scope (here the
