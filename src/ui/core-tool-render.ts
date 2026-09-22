@@ -1,5 +1,5 @@
 // Adapted from pi-code-previews for audited nested calls; see THIRD_PARTY_NOTICES.md.
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, type Stats } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
@@ -700,6 +700,43 @@ const postEditFileRows = (
  * Coverage is produced by the shared background pump; pass `invalidate` to
  * repaint once ready.
  */
+// Ctrl+O repaints every edit card in the transcript, and each removed-line
+// weave needs the whole post-edit file. Keep the split lines per path so a
+// repaint only pays a stat; mtime+size is the same identity the file
+// highlight cache trusts.
+const REMOVED_FILE_LINES_LIMIT = 24;
+const removedFileLines = new Map<
+  string,
+  { mtimeMs: number; size: number; lines: string[] | null }
+>();
+const removedFileLinesFor = (absolute: string, stat: Stats): string[] | null => {
+  const cached = removedFileLines.get(absolute);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    removedFileLines.delete(absolute);
+    removedFileLines.set(absolute, cached);
+    return cached.lines;
+  }
+  let text: string;
+  try {
+    text = readFileSync(absolute, "utf8");
+  } catch {
+    return null;
+  }
+  // A NUL byte marks a binary file; remember the verdict so the repaint does
+  // not read it again.
+  const lines = text.includes("\0")
+    ? null
+    : text.replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
+  removedFileLines.delete(absolute);
+  removedFileLines.set(absolute, { mtimeMs: stat.mtimeMs, size: stat.size, lines });
+  while (removedFileLines.size > REMOVED_FILE_LINES_LIMIT) {
+    const oldest = removedFileLines.keys().next().value;
+    if (oldest === undefined) break;
+    removedFileLines.delete(oldest);
+  }
+  return lines;
+};
+
 const highlightRemovedDiffLines = (
   parsed: Array<ParsedDiffLine | null>,
   filePath: string,
@@ -755,14 +792,8 @@ const highlightRemovedDiffLines = (
     return null;
   }
   if (!stat.isFile() || stat.size > MAX_HIGHLIGHT_CHARS) return null;
-  let text: string;
-  try {
-    text = readFileSync(absolute, "utf8");
-  } catch {
-    return null;
-  }
-  if (text.includes("\0")) return null;
-  const fileLines = text.replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
+  const fileLines = removedFileLinesFor(absolute, stat);
+  if (!fileLines) return null;
   // Context (post-edit, 1-based) must still match the file, or the pre-edit
   // reconstruction would be anchored to the wrong place.
   for (const line of block) {
