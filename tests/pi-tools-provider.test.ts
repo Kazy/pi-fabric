@@ -743,3 +743,129 @@ describe("tool_call preflight coverage for nested bash", () => {
     }
   });
 });
+
+describe("PiToolsProvider partial read guard", () => {
+  const withTempDir = async (run: (dir: string) => Promise<void>) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fabric-partial-read-"));
+    try {
+      await run(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const contextFor = (cwd: string, parentToolCallId = "program-a") => ({
+    ...baseContext,
+    cwd,
+    parentToolCallId,
+    extensionContext: { cwd } as ExtensionContext,
+    maxResultChars: 2_000_000,
+  });
+  const plainRegistry = (cwd: string) => {
+    const registry = new ActionRegistry();
+    registry.register(new PiToolsProvider(cwd, undefined, undefined));
+    return registry;
+  };
+
+  it("refuses to write back a file cut at 50KB and leaves it unchanged", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "big.txt");
+      const original = `${"x".repeat(200)}\n`.repeat(400);
+      fs.writeFileSync(file, original);
+      const registry = plainRegistry(dir);
+      const context = contextFor(dir);
+
+      const text = await registry.invoke("pi.read", { path: file }, context) as string;
+      expect(text.length).toBeLessThan(original.length);
+      await expect(
+        registry.invoke("pi.write", { path: file, content: text }, context),
+      ).rejects.toThrow(/pi\.write refused .*big\.txt.*pi\.edit/s);
+      expect(fs.readFileSync(file, "utf8")).toBe(original);
+    });
+  });
+
+  it("refuses after a read cut at 2000 lines of a file under 50KB", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "lines.txt");
+      fs.writeFileSync(file, "a\n".repeat(2500));
+      expect(fs.statSync(file).size).toBeLessThan(50 * 1024);
+      const registry = plainRegistry(dir);
+      const context = contextFor(dir);
+
+      await registry.invoke("pi.read", { path: file }, context);
+      await expect(
+        registry.invoke("pi.write", { path: file, content: "a\n" }, context),
+      ).rejects.toThrow(/pi\.write refused/);
+    });
+  });
+
+  it("refuses after an offset or limit read, whatever the path spelling", async () => {
+    await withTempDir(async (dir) => {
+      fs.writeFileSync(path.join(dir, "a.txt"), "1\n2\n3\n");
+      fs.writeFileSync(path.join(dir, "b.txt"), "1\n2\n3\n");
+      const registry = plainRegistry(dir);
+      const context = contextFor(dir);
+
+      await registry.invoke("pi.read", { path: "./a.txt", offset: 2 }, context);
+      await registry.invoke("pi.read", { path: path.join(dir, "b.txt"), limit: 1 }, context);
+      await expect(
+        registry.invoke("pi.write", { path: path.join(dir, "a.txt"), content: "x" }, context),
+      ).rejects.toThrow(/pi\.write refused/);
+      await expect(
+        registry.invoke("pi.write", { path: "@b.txt", content: "x" }, context),
+      ).rejects.toThrow(/pi\.write refused/);
+    });
+  });
+
+  it("refuses on the lifecycle path that replays extension events", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "big.txt");
+      fs.writeFileSync(file, "b\n".repeat(3000));
+      const runner = makeRunner();
+      const registry = registerWithRunner(runner);
+      const context = contextFor(process.cwd());
+
+      await registry.invoke("pi.read", { path: file }, context);
+      await expect(
+        registry.invoke("pi.write", { path: file, content: "b\n" }, context),
+      ).rejects.toThrow(/pi\.write refused/);
+      expect(runner.emitToolCall).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("allows the write after a full read, in another program, or on another file", async () => {
+    await withTempDir(async (dir) => {
+      const small = path.join(dir, "small.txt");
+      const big = path.join(dir, "big.txt");
+      const other = path.join(dir, "other.txt");
+      fs.writeFileSync(small, "1\n2\n3\n");
+      fs.writeFileSync(big, "c\n".repeat(3000));
+      const registry = plainRegistry(dir);
+      const context = contextFor(dir);
+
+      await registry.invoke("pi.read", { path: small, offset: 2 }, context);
+      await registry.invoke("pi.read", { path: small }, context);
+      await registry.invoke("pi.write", { path: small, content: "ok\n" }, context);
+      expect(fs.readFileSync(small, "utf8")).toBe("ok\n");
+
+      await registry.invoke("pi.read", { path: big }, context);
+      await registry.invoke("pi.write", { path: big, content: "new\n" }, contextFor(dir, "program-b"));
+      expect(fs.readFileSync(big, "utf8")).toBe("new\n");
+
+      await registry.invoke("pi.write", { path: other, content: "x" }, context);
+      expect(fs.readFileSync(other, "utf8")).toBe("x");
+    });
+  });
+
+  it("does not count offset 1 without a limit as a partial read", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "small.txt");
+      fs.writeFileSync(file, "1\n2\n");
+      const registry = plainRegistry(dir);
+      const context = contextFor(dir);
+
+      await registry.invoke("pi.read", { path: file, offset: 1 }, context);
+      await registry.invoke("pi.write", { path: file, content: "x" }, context);
+      expect(fs.readFileSync(file, "utf8")).toBe("x");
+    });
+  });
+});

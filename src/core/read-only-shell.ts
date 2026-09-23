@@ -122,10 +122,10 @@ const preview = (command: string): string => {
   return flat.length > MAX_COMMAND_PREVIEW ? `${flat.slice(0, MAX_COMMAND_PREVIEW - 1)}\u2026` : flat;
 };
 
-/** One note per successful read-only pi.bash call, bounded, for the outer fabric_exec result. */
-export const readOnlyShellNotes = (
+/** One note line per successful read-only pi.bash call, bounded. */
+export const readOnlyShellNoteLines = (
   audits: ReadonlyArray<{ ref: string; success?: boolean; args?: Record<string, unknown> }>,
-): string | undefined => {
+): string[] => {
   const notes: string[] = [];
   let index = 0;
   for (const audit of audits) {
@@ -142,5 +142,5 @@ export const readOnlyShellNotes = (
     );
     if (notes.length === MAX_NOTES) break;
   }
-  return notes.length > 0 ? `Fabric notes:\n${notes.join("\n")}` : undefined;
+  return notes;
 };
