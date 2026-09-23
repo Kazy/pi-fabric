@@ -38,7 +38,7 @@ import {
   fabricRepeatBlockText,
   fabricRepeatWarnText,
 } from "./repeat-guard.js";
-import { readOnlyShellNotes } from "./core/read-only-shell.js";
+import { fabricNotes } from "./core/fabric-notes.js";
 import { normalizeRunDisplay } from "./run-display.js";
 import type { PendingFabricHandoff } from "./prewalk/handoff.js";
 import type { FabricMediaBlock } from "./protocol.js";
@@ -966,7 +966,7 @@ export const createFabricExecTool = (
       }
       const fullFormattedValue = formatFabricValue(result.value, selectedResultFormat);
       const failureProgress = formatFailureProgress(result.trace, result.parkedPriorCalls);
-      const shellNotes = readOnlyShellNotes(result.audits);
+      const shellNotes = fabricNotes(result.audits, context.cwd);
       const fullSections = [...result.logs];
       if (fullFormattedValue.text) fullSections.push(fullFormattedValue.text);
       if (result.error) fullSections.push(`Runtime error: ${result.error}`);
