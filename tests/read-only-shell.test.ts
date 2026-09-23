@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readOnlyShellNotes, readOnlyShellReplacements } from "../src/core/read-only-shell.js";
+import { fabricNotes } from "../src/core/fabric-notes.js";
+import { readOnlyShellReplacements } from "../src/core/read-only-shell.js";
+
+const readOnlyShellNotes = (audits: Parameters<typeof fabricNotes>[0]) => fabricNotes(audits, "/repo");
 
 describe("readOnlyShellReplacements", () => {
   it("names pi.ls and pi.read for a listing plus a file read", () => {
