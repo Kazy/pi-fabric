@@ -458,4 +458,29 @@ return [positional.output, alias.output, batch.output, symbol.output, symbolAlia
       rmTempSync(cwd);
     }
   });
+
+  it("strips Fabric's write force flag before a closed write override runs", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "fabric-force-override-"));
+    const calls: Array<Record<string, unknown>> = [];
+    const override = makeOverride("write", Type.Object({ path: Type.String(), content: Type.String() }, { additionalProperties: false }), calls);
+    const { catalog, service } = setup(cwd, [override]);
+    try {
+      fs.writeFileSync(path.join(cwd, "big.txt"), Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n"));
+      const refused = await service.execute({
+        code: `await pi.read("big.txt"); await pi.write({ path: "big.txt", content: "x" });`,
+        signal: undefined, parentToolCallId: "force-override-refused", context: makeContext(cwd), onPartial() {},
+      });
+      expect(refused.error).toContain("pi.write refused");
+      expect(calls).toEqual([]);
+      const forced = await service.execute({
+        code: `await pi.read("big.txt"); return (await pi.write({ path: "big.txt", content: "x", force: true })).output;`,
+        signal: undefined, parentToolCallId: "force-override-forced", context: makeContext(cwd), onPartial() {},
+      });
+      expect(forced.error).toBeUndefined();
+      expect(calls).toEqual([{ path: "big.txt", content: "x" }]);
+    } finally {
+      catalog.clear();
+      rmTempSync(cwd);
+    }
+  });
 });

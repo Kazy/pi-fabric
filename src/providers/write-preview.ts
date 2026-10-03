@@ -16,7 +16,7 @@ type ExistingFilePreview =
       sizeExceeded?: boolean;
     };
 
-const resolvePreviewPath = (filePath: string, cwd: string): string => {
+export const resolvePreviewPath = (filePath: string, cwd: string): string => {
   let expanded = filePath.startsWith("@") ? filePath.slice(1) : filePath;
   expanded = expanded.replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ");
   if (expanded === "~") expanded = homedir();
