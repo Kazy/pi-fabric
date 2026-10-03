@@ -778,7 +778,7 @@ describe("PiToolsProvider partial read guard", () => {
       expect(text.length).toBeLessThan(original.length);
       await expect(
         registry.invoke("pi.write", { path: file, content: text }, context),
-      ).rejects.toThrow(/pi\.write refused .*big\.txt.*pi\.edit/s);
+      ).rejects.toThrow(/pi\.write refused.*big\.txt.*pi\.edit/s);
       expect(fs.readFileSync(file, "utf8")).toBe(original);
     });
   });

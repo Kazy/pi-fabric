@@ -28,7 +28,6 @@ import {
 } from "../core/shell-jobs.js";
 import { parseShellMonitor, shellMonitorSchema } from "../core/shell-monitor.js";
 import { expandSkillDirMarkersForRead } from "../core/skill-dir.js";
-import { resolveToolPath } from "../core/fabric-notes.js";
 import type {
   FabricActionDescriptor,
   FabricBashMiddlewareV1,
@@ -52,7 +51,8 @@ import {
   withShellCwdSchema,
 } from "./pi-bash-cwd.js";
 import { writeContentForPreview } from "./write-diff-limits.js";
-import { createPreviewWriteToolDefinition } from "./write-preview.js";
+import { createPreviewWriteToolDefinition, resolvePreviewPath } from "./write-preview.js";
+import { PartialReadGuard, partialReadWriteError } from "./partial-read-guard.js";
 
 import { readChildToolAllowlist } from "../core/child-tool-allowlist.js";
 import { executionToolContext } from "../capture/tool-context.js";
@@ -98,6 +98,7 @@ const closedPiInputSchema = (name: PiCoreToolName, source: unknown): Record<stri
       } };
     }
   }
+  if (name === "write") properties.force = writeForceSchema;
   return { ...schema, properties, additionalProperties: false };
 };
 
@@ -114,6 +115,11 @@ const parseDurableNotify = (value: unknown): { topic: string; kind?: string } | 
     throw new Error("notify.kind must be a mesh event kind of at most 128 characters");
   }
   return { topic: input.topic, ...(typeof input.kind === "string" ? { kind: input.kind } : {}) };
+};
+
+const writeForceSchema = {
+  type: "boolean",
+  description: "Write even though this program read only part of the file. Fabric-only; never reaches the write tool.",
 };
 
 const MAX_RENDERER_ARGUMENT_CHARS = 200_000;
@@ -183,17 +189,6 @@ const expandReplaceAllEdit = (
       : next.replace(edit.oldText, edit.newText);
   }
   return { path: filePath, edits: [{ oldText: current, newText: next }] };
-};
-
-// Bounds the per-program partial-read sets; programs finish long before 64 newer ones start.
-const MAX_TRACKED_PROGRAMS = 64;
-
-// pi.read stops at 50KB or 2000 lines, and offset/limit select a slice. Writing
-// that text back deletes the rest of the file.
-const readWasPartial = (args: Record<string, unknown>, details: unknown): boolean => {
-  if ((typeof args.offset === "number" && args.offset > 1) || args.limit !== undefined) return true;
-  const truncation = (details as { truncation?: Record<string, unknown> } | undefined)?.truncation;
-  return truncation?.truncated === true || truncation?.firstLineExceedsLimit === true;
 };
 
 const readTools = new Set<PiCoreToolName>(["read", "grep", "find", "ls"]);
@@ -283,9 +278,7 @@ export class PiToolsProvider implements FabricProvider {
   readonly #shellJobs: FabricShellJobStore;
   readonly #ownsShellJobs: boolean;
   readonly #getShellHangMs: (() => number) | undefined;
-  // Keyed by parentToolCallId: the guard applies inside one fabric_exec program,
-  // where the model writes text it never saw.
-  readonly #partialReads = new Map<string, Set<string>>();
+  readonly #partialReads = new PartialReadGuard();
 
   constructor(
     cwd: string,
@@ -355,6 +348,11 @@ export class PiToolsProvider implements FabricProvider {
           namespace: "extension-middleware",
         };
       }
+      if (name === "write") {
+        const schema = override.inputSchema as Record<string, unknown>;
+        const properties = { ...(schema.properties as Record<string, unknown> | undefined), force: writeForceSchema };
+        return { ...override, inputSchema: { ...schema, properties }, namespace: "extension-override" };
+      }
       return { ...override, namespace: "extension-override" };
     }
     const tool = this.#tools[name];
@@ -362,7 +360,15 @@ export class PiToolsProvider implements FabricProvider {
     return this.#descriptor(name, tool);
   }
 
+  // Tool preparation, including an override's, may drop keys it does not know.
+  // Carry Fabric's force flag around it so the guard in invoke still sees it.
   prepareArguments(actionName: string, args: Record<string, unknown>): Record<string, unknown> {
+    if (actionName !== "write" || !Object.hasOwn(args, "force")) return this.#prepareToolArguments(actionName, args);
+    const { force, ...rest } = args;
+    return { ...this.#prepareToolArguments(actionName, rest), force };
+  }
+
+  #prepareToolArguments(actionName: string, args: Record<string, unknown>): Record<string, unknown> {
     this.#assertAllowed(actionName);
     const middleware = this.#bashMiddleware(actionName);
     const definition = (middleware ? undefined : this.#catalog?.get(actionName)?.definition) ?? this.#tools[actionName as PiCoreToolName];
@@ -638,6 +644,38 @@ export class PiToolsProvider implements FabricProvider {
     args: Record<string, unknown>,
     context: FabricInvocationContext,
   ): Promise<unknown> {
+    const filePath = (actionName === "read" || actionName === "write") && typeof args.path === "string"
+      ? resolvePreviewPath(args.path, this.#cwd)
+      : undefined;
+    let toolArgs = args;
+    let force = false;
+    if (actionName === "write" && Object.hasOwn(args, "force")) {
+      const { force: flag, ...rest } = args;
+      toolArgs = rest;
+      force = flag === true;
+    }
+    if (actionName === "write" && filePath && !force) {
+      const partial = this.#partialReads.partial(context.parentToolCallId, filePath);
+      if (partial) throw partialReadWriteError({ ...partial, path: args.path as string });
+    }
+    const result = await this.#invokeTool(actionName, toolArgs, context);
+    if (filePath && actionName === "read" && typeof result === "string") {
+      this.#partialReads.recordRead(context.parentToolCallId, filePath, result, args.offset);
+    } else if (filePath && actionName === "write") {
+      this.#partialReads.recordWrite(context.parentToolCallId, filePath);
+    }
+    return result;
+  }
+
+  async invocationEnded(parentToolCallId: string): Promise<void> {
+    this.#partialReads.end(parentToolCallId);
+  }
+
+  async #invokeTool(
+    actionName: string,
+    args: Record<string, unknown>,
+    context: FabricInvocationContext,
+  ): Promise<unknown> {
     const name = actionName as PiCoreToolName;
     this.#assertAllowed(name);
     if (process.env.PI_FABRIC_WRITE_POLICY) {
@@ -648,7 +686,6 @@ export class PiToolsProvider implements FabricProvider {
       if (denial) throw new Error(denial);
     }
     if (!this.#requireCapturedOverrides && !this.#tools[name]) throw new Error(`Unknown Pi tool: ${actionName}`);
-    this.#assertWriteAfterFullRead(name, args, context);
     // Pin the selected protection across awaited lifecycle hooks/catalog refreshes.
     const middleware = this.#bashMiddleware(name);
     const runner = this.#catalog?.runner;
@@ -704,7 +741,6 @@ export class PiToolsProvider implements FabricProvider {
       const result = value as import("./captured-tools-provider.js").CapturedToolInvocationResult;
       this.#attachReadMedia(name, result, context);
       this.#attachReadNote(name, result, context);
-      this.#trackRead(name, result, args, context);
       this.#attachPreview(name, result, args, context);
       return this.#normalizeResult(name, result, args, context);
     }
@@ -727,7 +763,6 @@ export class PiToolsProvider implements FabricProvider {
       if (result.isError && isPiShellToolName(name) && !(context.nativeToolResult && tool.outputSchema && result.structuredContent !== undefined)) throw classifyPiBashResult(result);
       this.#attachReadMedia(name, result, context);
       this.#attachReadNote(name, result, context);
-      this.#trackRead(name, result, args, context);
       this.#attachPreview(name, result, args, context);
       return this.#normalizeResult(name, result, args, context);
     }
@@ -880,47 +915,8 @@ export class PiToolsProvider implements FabricProvider {
       const text = textContent(result.content).trim();
       throw new Error(text || (thrown instanceof Error ? thrown.message : `Pi tool ${name} failed`));
     }
-    this.#trackRead(name, result, args, context);
     this.#attachPreview(name, result, args, context);
     return this.#normalizeResult(name, result, args, context);
-  }
-
-  #trackRead(
-    name: PiCoreToolName,
-    result: { details?: unknown },
-    args: Record<string, unknown>,
-    context: FabricInvocationContext,
-  ): void {
-    if (name !== "read" || typeof args.path !== "string") return;
-    const resolved = resolveToolPath(args.path, this.#cwd);
-    const paths = this.#partialReads.get(context.parentToolCallId);
-    if (!readWasPartial(args, result.details)) {
-      paths?.delete(resolved);
-      return;
-    }
-    if (paths) {
-      paths.add(resolved);
-      return;
-    }
-    this.#partialReads.set(context.parentToolCallId, new Set([resolved]));
-    if (this.#partialReads.size > MAX_TRACKED_PROGRAMS) {
-      this.#partialReads.delete(this.#partialReads.keys().next().value!);
-    }
-  }
-
-  #assertWriteAfterFullRead(
-    name: PiCoreToolName,
-    args: Record<string, unknown>,
-    context: FabricInvocationContext,
-  ): void {
-    if (name !== "write" || typeof args.path !== "string") return;
-    const paths = this.#partialReads.get(context.parentToolCallId);
-    if (!paths?.has(resolveToolPath(args.path, this.#cwd))) return;
-    throw new Error(
-      `pi.write refused ${args.path}: this program read only part of it with pi.read ` +
-        "(output stops at 50KB or 2000 lines, or offset/limit was set), so the write would delete the rest. " +
-        "Use pi.edit({ path, edits: [{ oldText, newText }] }) for partial changes.",
-    );
   }
 
   // Schema-enforce and early-startup calls may have no ExtensionRunner, so the
