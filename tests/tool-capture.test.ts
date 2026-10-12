@@ -460,6 +460,67 @@ describe("registered extension tool capture", () => {
     }
   });
 
+  it("patches the advertised runner in a standalone Bun binary and restores it on dispose", async () => {
+    // A Bun binary's argv[1] is a virtual /$bunfs path and the in-realm import
+    // resolves pi-fabric's private copy, so only the advertised class is live.
+    class HostRunner {
+      extensions: Array<{ tools: Map<string, RegisteredTool> }> = [];
+      getAllRegisteredTools(): RegisteredTool[] {
+        return this.extensions.flatMap((extension) => [...extension.tools.values()]);
+      }
+    }
+    const original = HostRunner.prototype.getAllRegisteredTools;
+    const key = Symbol.for("pi-fabric.host-extension-runners.v1");
+    const holder = globalThis as typeof globalThis & { [key: symbol]: Set<unknown> | undefined };
+    const saved = holder[key];
+    const savedArgv1 = process.argv[1]!;
+    const savedRoot = process.env.PI_PACKAGE_DIR;
+    process.argv[1] = "/$bunfs/root/pi";
+    delete process.env.PI_PACKAGE_DIR;
+    // Junk next to the live class must neither throw nor hide it.
+    holder[key] = new Set([{ prototype: {} }, "ExtensionRunner", function NotARunner() {}, HostRunner]);
+    const inRealmOriginal = ExtensionRunner.prototype.getAllRegisteredTools;
+    try {
+      const fabricTool = tool("fabric_exec");
+      const catalog = new CapturedToolCatalog();
+      const controller = await installRegisteredToolCapture({ anchorDefinition: fabricTool, catalog });
+      controllers.push(controller);
+      expect(HostRunner.prototype.getAllRegisteredTools).not.toBe(original);
+      expect(ExtensionRunner.prototype.getAllRegisteredTools).toBe(inRealmOriginal);
+      const runner = new HostRunner();
+      runner.extensions = [{ tools: new Map([
+        ["fabric_exec", registered(fabricTool, "/extensions/pi-fabric/dist/extension-entry.ts")],
+      ]) }];
+      runner.getAllRegisteredTools();
+      expect(catalog.runner).toBe(runner);
+      controller.dispose();
+      expect(HostRunner.prototype.getAllRegisteredTools).toBe(original);
+    } finally {
+      holder[key] = saved;
+      process.argv[1] = savedArgv1;
+      if (savedRoot === undefined) delete process.env.PI_PACKAGE_DIR;
+      else process.env.PI_PACKAGE_DIR = savedRoot;
+    }
+  });
+
+  it("the TypeScript entry advertises the host runner without dropping one already advertised", async () => {
+    // The durable worker host advertises its SDK copy before extensions load;
+    // the entry must add to that set, not replace it.
+    class WorkerRunner { getAllRegisteredTools(): RegisteredTool[] { return []; } }
+    const key = Symbol.for("pi-fabric.host-extension-runners.v1");
+    const holder = globalThis as typeof globalThis & { [key: symbol]: Set<unknown> | undefined };
+    const saved = holder[key];
+    holder[key] = new Set([WorkerRunner]);
+    try {
+      const entry = await import("../src/extension-entry.js");
+      const bootstrap = await import("../src/extension-bootstrap.js");
+      expect([...holder[key]!]).toEqual([WorkerRunner, ExtensionRunner]);
+      expect(entry.default).toBe(bootstrap.default);
+    } finally {
+      holder[key] = saved;
+    }
+  });
+
   describe("in a running Pi CLI", () => {
     const hostRoot = path.dirname(path.dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))));
     const bundledRunner = async () => ((await import(
