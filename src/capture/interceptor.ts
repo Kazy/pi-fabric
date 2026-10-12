@@ -42,6 +42,9 @@ const HUB_SYMBOL = Symbol.for("pi-fabric.registered-tool-capture.v1");
 // A process that hosts Pi sessions on a private SDK copy (the pi-durable worker
 // resolves the pinned `pi-fabric-worker-sdk` alias) advertises that copy's
 // ExtensionRunner under this process-local key; see src/durable/worker-host.ts.
+// Pi's own CLI is advertised by src/extension-entry.ts: in a standalone Bun
+// binary argv[1] is a virtual /$bunfs path and the in-realm import resolves
+// pi-fabric's private node_modules copy.
 // PI_PACKAGE_DIR, argv[1], and the entry realm cannot locate an aliased
 // dependency, and in hoisted or npm layouts the peer copy they do find is a
 // distinct class identity: patching only that dead class leaves the catalog
