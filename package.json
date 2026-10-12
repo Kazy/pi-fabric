@@ -125,7 +125,7 @@
   },
   "pi": {
     "extensions": [
-      "./dist/extension-bootstrap.js",
+      "./dist/extension-entry.ts",
       "./node_modules/pi-coralbricks-provider/index.ts"
     ],
     "skills": [],

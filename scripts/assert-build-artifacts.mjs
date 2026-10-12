@@ -196,7 +196,8 @@ if ([...validator.matchAll(staticImport)].length || /\bimport\s*\(/.test(validat
 // Measure the entry Pi actually loads, including every shared static chunk.
 const startupFiles = staticClosure(ownExtensions.map(file => resolve(root, file)));
 const startupBytes = [...startupFiles].reduce((sum, file) => sum + Buffer.byteLength(readFileSync(file)), 0);
-if (startupBytes > 1000 * 1024 || startupFiles.size > 41) {
+// 42 files: the bootstrap closure plus the source entry that wraps it.
+if (startupBytes > 1000 * 1024 || startupFiles.size > 42) {
   throw new Error(`Startup static graph grew beyond its budget: ${startupBytes} bytes in ${startupFiles.size} files`);
 }
 const optionalPackages = ["diff", "yaml", "@lezer/python", "shiki", "@shikijs/langs", "@shikijs/themes", "typescript", "mcporter", "jev-fabric", "@earendil-works/pi-durable", "@earendil-works/chord", "pi-fabric-worker-sdk"];
@@ -210,7 +211,10 @@ for (const file of startupFiles) {
 // Pi loads this graph as native ESM, where jiti's virtual host modules never
 // apply: a runtime SDK import (including the bare `import "pkg"` left by an
 // inline `type` specifier) evaluates a second, unbundled SDK in the bundled CLI.
+// A .ts entry is the exception: Pi always transforms it and maps the SDK
+// import to the host's own module, which is why src/extension-entry.ts exists.
 for (const file of startupFiles) {
+  if (file.endsWith(".ts")) continue;
   for (const match of readFileSync(file, "utf8").matchAll(staticImport)) {
     if (match[1] === "@earendil-works/pi-coding-agent" || match[1]?.startsWith("@earendil-works/pi-coding-agent/")) {
       throw new Error(`Startup imports the Pi SDK at runtime from ${file}; use import type or src/core/host-sdk.ts`);

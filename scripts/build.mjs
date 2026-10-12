@@ -148,6 +148,10 @@ for (const source of Object.keys(receipt.outputs)) {
 }
 copyFileSync(receiptPath, "dist/verified/generated/manifest.json");
 
+// Pi must load this entry as TypeScript so its loader maps the host modules;
+// see the file's header.
+copyFileSync("src/extension-entry.ts", "dist/extension-entry.ts");
+
 const bundledPackages = Object.keys(result.metafile.inputs).filter((input) =>
   input.includes("node_modules/"),
 );
