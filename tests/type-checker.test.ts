@@ -269,6 +269,22 @@ return out;
     }
   });
 
+  it("types raw reads, full shell output, and the truncation fields in strict mode", () => {
+    const accepted = typeCheckFabricCode(
+      `
+const text: string = await pi.read({ path: "a.json", raw: true });
+const viaOptions: string = await pi.read("a.json", { raw: true });
+const r = await pi.bash("ls", { full: true });
+const where: string | undefined = r.ok && r.truncated ? r.fullOutputPath : undefined;
+return { text, viaOptions, where };
+`,
+      GUEST_TYPE_DECLARATIONS,
+      false,
+      "strict",
+    );
+    expect(accepted.errors).toEqual([]);
+  });
+
   it("strict mode still accepts unknown results, settled-result narrowing, and dynamic namespaces", () => {
     const result = typeCheckFabricCode(
       `

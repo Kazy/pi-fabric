@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   createBashToolDefinition,
+  createReadToolDefinition,
   type BashOperations,
   type ExtensionContext,
   type ExtensionRunner,
@@ -866,6 +867,236 @@ describe("PiToolsProvider partial read guard", () => {
       await registry.invoke("pi.read", { path: file, offset: 1 }, context);
       await registry.invoke("pi.write", { path: file, content: "x" }, context);
       expect(fs.readFileSync(file, "utf8")).toBe("x");
+    });
+  });
+});
+
+describe("PiToolsProvider exact output", () => {
+  const withTempDir = async (run: (dir: string) => Promise<void>) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fabric-raw-"));
+    try {
+      await run(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const contextFor = (cwd: string) => ({
+    ...baseContext,
+    cwd,
+    parentToolCallId: "program-raw",
+    extensionContext: { ...baseContext.extensionContext, cwd } as ExtensionContext,
+    maxResultChars: 2_000_000,
+  });
+  const plainRegistry = (cwd: string) => {
+    const registry = new ActionRegistry();
+    registry.register(new PiToolsProvider(cwd, undefined, undefined));
+    return registry;
+  };
+
+  it("returns a one-line JSON file over 50KB whole, where the plain read returns a notice", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "rows.json");
+      const rows = Array.from({ length: 3000 }, (_, id) => ({ id, name: `row-${id}`, note: "x".repeat(20) }));
+      fs.writeFileSync(file, JSON.stringify(rows));
+      const registry = plainRegistry(dir);
+
+      const plain = await registry.invoke("pi.read", { path: file }, contextFor(dir));
+      expect(() => JSON.parse(plain as string)).toThrow();
+
+      const raw = await registry.invoke("pi.read", { path: file, raw: true }, contextFor(dir));
+      expect(JSON.parse(raw as string)).toEqual(rows);
+    });
+  });
+
+  it("keeps every byte: tabs, CRLF, Unicode, no final newline, and text that looks like a notice", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "exact.txt");
+      const text = "a\tb\r\nc → ü 😀\n\n[Showing lines 1-2 of 9. Use offset=3 to continue.]";
+      fs.writeFileSync(file, text);
+      const raw = await plainRegistry(dir).invoke("pi.read", { path: file, raw: true }, contextFor(dir));
+      expect(raw).toBe(text);
+    });
+  });
+
+  it("counts a raw read as a full read for the partial-write guard", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "big.txt");
+      fs.writeFileSync(file, "line\n".repeat(5000));
+      const registry = plainRegistry(dir);
+      const context = contextFor(dir);
+
+      await registry.invoke("pi.read", { path: file, limit: 10 }, context);
+      await expect(registry.invoke("pi.write", { path: file, content: "x" }, context)).rejects.toThrow();
+      await registry.invoke("pi.read", { path: file, raw: true }, context);
+      await registry.invoke("pi.write", { path: file, content: "x" }, context);
+      expect(fs.readFileSync(file, "utf8")).toBe("x");
+    });
+  });
+
+  it("refuses offset, limit, and their aliases with raw", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "a.txt");
+      fs.writeFileSync(file, "1\n2\n");
+      const registry = plainRegistry(dir);
+      for (const extra of [{ offset: 2 }, { limit: 1 }, { start: 2 }, { max: 1 }]) {
+        await expect(registry.invoke("pi.read", { path: file, raw: true, ...extra }, contextFor(dir)), JSON.stringify(extra))
+          .rejects.toThrow(/raw:true returns the whole file/);
+      }
+    });
+  });
+
+  it("accepts text whose JSON encoding is exactly the result limit and refuses one character more", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "edge.txt");
+      const registry = plainRegistry(dir);
+      // The two JSON quotes count toward the registry's bound.
+      fs.writeFileSync(file, "a".repeat(1_999_998));
+      const raw = await registry.invoke("pi.read", { path: file, raw: true }, contextFor(dir));
+      expect(raw).toBe("a".repeat(1_999_998));
+      fs.writeFileSync(file, "a".repeat(1_999_999));
+      await expect(registry.invoke("pi.read", { path: file, raw: true }, contextFor(dir)))
+        .rejects.toThrow(/2000001 JSON-encoded characters is over the 2000000-character result limit/);
+    });
+  });
+
+  it("refuses JSON text that grows past the limit when encoded, instead of returning a truncation object", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "quotes.json");
+      // 1.35 MB on disk, under the limit; each quote becomes two characters in the result.
+      fs.writeFileSync(file, JSON.stringify(Array.from({ length: 450_000 }, () => "")));
+      expect(fs.statSync(file).size).toBeLessThan(2_000_000);
+      await expect(plainRegistry(dir).invoke("pi.read", { path: file, raw: true }, contextFor(dir)))
+        .rejects.toThrow(/over the 2000000-character result limit/);
+    });
+  });
+
+  it("follows a smaller configured result limit", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "mid.txt");
+      fs.writeFileSync(file, "a".repeat(200_000));
+      await expect(plainRegistry(dir).invoke("pi.read", { path: file, raw: true }, { ...contextFor(dir), maxResultChars: 100_000 }))
+        .rejects.toThrow(/100000-character result limit/);
+    });
+  });
+
+  it("refuses binary files and missing files", async () => {
+    await withTempDir(async (dir) => {
+      const binary = path.join(dir, "blob.bin");
+      fs.writeFileSync(binary, Buffer.from([0x7b, 0x00, 0x7d]));
+      const registry = plainRegistry(dir);
+      await expect(registry.invoke("pi.read", { path: binary, raw: true }, contextFor(dir))).rejects.toThrow(/NUL bytes/);
+      await expect(registry.invoke("pi.read", { path: path.join(dir, "absent.txt"), raw: true }, contextFor(dir))).rejects.toThrow();
+    });
+  });
+
+  it("rejects a raw flag that is not a boolean", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "a.txt");
+      fs.writeFileSync(file, "1\n");
+      await expect(plainRegistry(dir).invoke("pi.read", { path: file, raw: "yes" }, contextFor(dir))).rejects.toThrow();
+    });
+  });
+
+  it("does not read the file when a tool_call hook blocks the read", async () => {
+    await withTempDir(async (dir) => {
+      const file = path.join(dir, "secret.txt");
+      fs.writeFileSync(file, "secret");
+      const runner = makeRunner({ emitToolCall: vi.fn(async () => ({ block: true, reason: "reads are blocked" })) });
+      const registry = registerWithRunner(runner);
+      await expect(registry.invoke("pi.read", { path: file, raw: true }, contextFor(dir))).rejects.toThrow("reads are blocked");
+      const input = (runner.emitToolCall as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as { input: Record<string, unknown> };
+      expect(input.input).not.toHaveProperty("raw");
+    });
+  });
+
+  it("puts truncated and fullOutputPath at the top level of a long shell result", async () => {
+    await withTempDir(async (dir) => {
+      const result = await plainRegistry(dir).invoke(
+        "pi.bash",
+        { command: `node -e 'for (let i = 0; i < 5000; i++) console.log(i, "x".repeat(100))'` },
+        contextFor(dir),
+      ) as { output: string; truncated?: boolean; fullOutputPath?: string };
+      try {
+        expect(result.truncated).toBe(true);
+        expect(result.output.split("\n").length).toBeLessThan(5000);
+        expect(fs.readFileSync(result.fullOutputPath!, "utf8").trimEnd().split("\n")).toHaveLength(5000);
+      } finally {
+        if (result.fullOutputPath) fs.rmSync(result.fullOutputPath, { force: true });
+      }
+    });
+  });
+
+  it("returns all shell output with full:true, including one long line", async () => {
+    await withTempDir(async (dir) => {
+      const registry = plainRegistry(dir);
+      const lines = await registry.invoke(
+        "pi.bash",
+        { command: `node -e 'for (let i = 0; i < 5000; i++) console.log(i, "x".repeat(100))'`, full: true },
+        contextFor(dir),
+      ) as { output: string; truncated?: boolean; fullOutputPath?: string };
+      const rows = Array.from({ length: 3000 }, (_, id) => ({ id }));
+      const json = await registry.invoke(
+        "pi.bash",
+        { command: `node -e 'process.stdout.write(JSON.stringify(Array.from({length: 3000}, (_, id) => ({id}))))'`, full: true },
+        contextFor(dir),
+      ) as { output: string; truncated?: boolean; fullOutputPath?: string };
+      try {
+        expect(lines.truncated).toBe(false);
+        const output = lines.output.trimEnd().split("\n");
+        expect(output).toHaveLength(5000);
+        expect(output[0]).toBe(`0 ${"x".repeat(100)}`);
+        expect(output.at(-1)).toBe(`4999 ${"x".repeat(100)}`);
+        expect(JSON.parse(json.output)).toEqual(rows);
+      } finally {
+        for (const result of [lines, json]) if (result.fullOutputPath) fs.rmSync(result.fullOutputPath, { force: true });
+      }
+    });
+  });
+
+  it("works when an extension registers Pi's own read and bash as overrides", async () => {
+    await withTempDir(async (dir) => {
+      const catalog = new CapturedToolCatalog();
+      const sourceInfo = { path: "/extensions/native-core-tools.ts", source: "test", scope: "user", origin: "package" };
+      catalog.replace(
+        [
+          { definition: createReadToolDefinition(dir), sourceInfo } as RegisteredTool,
+          { definition: createBashToolDefinition(dir), sourceInfo } as RegisteredTool,
+        ],
+        makeRunner({ createContext: () => ({ ...baseContext.extensionContext, cwd: dir }) }),
+        DEFAULT_FABRIC_CONFIG.capture,
+        "/extensions/pi-fabric/index.ts",
+      );
+      const provider = new PiToolsProvider(dir, catalog, new CapturedToolsProvider(catalog));
+      const registry = new ActionRegistry();
+      registry.register(provider);
+      const readSchema = (await provider.describe("read", contextFor(dir)))?.inputSchema as { properties: Record<string, unknown> };
+      expect(readSchema.properties).toHaveProperty("raw");
+
+      const file = path.join(dir, "rows.json");
+      const rows = Array.from({ length: 3000 }, (_, id) => ({ id, note: "x".repeat(20) }));
+      fs.writeFileSync(file, JSON.stringify(rows));
+      const raw = await registry.invoke("pi.read", { path: file, raw: true }, contextFor(dir));
+      expect(JSON.parse(raw as string)).toEqual(rows);
+
+      const bash = await registry.invoke(
+        "pi.bash",
+        { command: `node -e 'for (let i = 0; i < 5000; i++) console.log(i)'`, full: true },
+        contextFor(dir),
+      ) as { output: string; truncated?: boolean; fullOutputPath?: string };
+      try {
+        expect(bash.truncated).toBe(false);
+        expect(bash.output.trimEnd().split("\n")).toHaveLength(5000);
+      } finally {
+        if (bash.fullOutputPath) fs.rmSync(bash.fullOutputPath, { force: true });
+      }
+    });
+  });
+
+  it("leaves short shell output unchanged with full:true", async () => {
+    await withTempDir(async (dir) => {
+      const result = await plainRegistry(dir).invoke("pi.bash", { command: "echo hi", full: true }, contextFor(dir));
+      expect(result).toMatchObject({ ok: true, output: expect.stringContaining("hi") });
+      expect(result).not.toHaveProperty("truncated");
     });
   });
 });

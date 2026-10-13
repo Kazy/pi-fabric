@@ -70,12 +70,12 @@ function createPiArgumentNormalizer() {
     powershell: ["timeout"],
   };
   const __piOptionalFields: Record<string, string[]> = {
-    read: ["offset", "limit"],
+    read: ["offset", "limit", "raw"],
     grep: ["path", "glob", "ignoreCase", "literal", "context", "limit"],
     find: ["path", "limit"],
     ls: ["path", "limit"],
-    bash: ["timeout", "background", "durable"],
-    powershell: ["timeout", "background"],
+    bash: ["timeout", "background", "durable", "full"],
+    powershell: ["timeout", "background", "full"],
   };
   const __normalizePiArgs = (name: string, args: any, canonicalFields: readonly string[] = []): unknown => {
     const field = __piStringFields[name];

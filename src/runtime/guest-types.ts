@@ -540,7 +540,11 @@ type PiFindPatternArgument = { pattern?: string; query?: string; regex?: string;
 // Two-arg (primary, options) bags for the string-primary tools. Only option
 // aliases belong here (max/start/ctx/ic/...), never primary-field aliases —
 // the primary field comes from the positional string.
-type PiReadOptions = { offset?: number; limit?: number; start?: number; max?: number };
+type PiReadOptions = {
+  offset?: number; limit?: number; start?: number; max?: number;
+  /** Whole text file, exact: no line numbers, notices, or 50KB line limit. At most 2,000,000 bytes; no offset or limit. */
+  raw?: boolean;
+};
 // cwd is honored per call by the pi provider, which binds the command to a
 // shell definition rooted there; relative paths resolve from the session cwd.
 // The alias spellings mirror the shell entries in __piArgAliases: the
@@ -553,7 +557,13 @@ type PiShellOptions = {
   /** Opt-in line events; implies background. ui never wakes the model; wake may start an owning-agent turn. */
   monitor?: { delivery: "ui" | "wake"; timeoutMs?: number; intervalMs?: number; match?: string };
   cwd?: string; workdir?: string; directory?: string; workingDirectory?: string;
+  /** If the output was truncated, return all of it from fullOutputPath (at most 2,000,000 bytes). */
+  full?: boolean;
 };
+// truncated/fullOutputPath appear only when Pi kept just the end of the output.
+type PiShellResult =
+  | { ok: true; output: string; details: unknown; truncated?: boolean; fullOutputPath?: string }
+  | { ok: false; output: string; details: null; exitCode: number; error: string };
 type PiBashOptions = PiShellOptions & {
   /** Owned by an external jev-fabric store (macOS/Linux): keeps running if Pi exits and reattaches on resume. Implies background. */
   durable?: boolean;
@@ -585,10 +595,10 @@ type PiFindCompatibilityArgument = string | (PiFindPatternArgument & PiNumericSt
 type PiLsCompatibilityArgument = string | (PiOptionalPathArgument & PiNumericStringOptions<PiLsOptions>);
 interface PiToolsApi {
   read(args: PiReadArgument, options?: PiReadOptions): Promise<string>;
-  bash(args: PiBashArgument, options?: PiBashOptions): Promise<{ ok: true; output: string; details: unknown } | { ok: false; output: string; details: null; exitCode: number; error: string }>;
-  bash(command: string, timeoutSeconds: number): Promise<{ ok: true; output: string; details: unknown } | { ok: false; output: string; details: null; exitCode: number; error: string }>;
-  powershell(args: PiPowerShellArgument, options?: PiPowerShellOptions): Promise<{ ok: true; output: string; details: unknown } | { ok: false; output: string; details: null; exitCode: number; error: string }>;
-  powershell(command: string, timeoutSeconds: number): Promise<{ ok: true; output: string; details: unknown } | { ok: false; output: string; details: null; exitCode: number; error: string }>;
+  bash(args: PiBashArgument, options?: PiBashOptions): Promise<PiShellResult>;
+  bash(command: string, timeoutSeconds: number): Promise<PiShellResult>;
+  powershell(args: PiPowerShellArgument, options?: PiPowerShellOptions): Promise<PiShellResult>;
+  powershell(command: string, timeoutSeconds: number): Promise<PiShellResult>;
   edit(args: PiEditArgument): Promise<{ ok: true; output: string; details: unknown }>;
   edit(path: string, oldText: string, newText: string): Promise<{ ok: true; output: string; details: unknown }>;
   write(args: PiWriteArgument): Promise<{ ok: true; output: string; details: unknown }>;
