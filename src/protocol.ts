@@ -761,6 +761,8 @@ export type FabricMessageSender =
 export interface FabricInvocationContext {
   /** Host-selected result projection; never an action argument or an authority grant. */
   nativeToolResult?: boolean;
+  /** The registry's bound on this call's JSON-encoded result. Larger results become a fabricTruncated object. */
+  maxResultChars?: number;
   cwd: string;
   signal: AbortSignal | undefined;
   parentToolCallId: string;

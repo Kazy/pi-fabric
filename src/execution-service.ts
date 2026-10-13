@@ -23,6 +23,7 @@ import {
 } from "./audit/assessment.js";
 import type { CapturedToolCatalog } from "./capture/catalog.js";
 import { isPiShellRef, PI_CORE_TOOL_NAME_SET } from "./core/pi-tools.js";
+import { parkedTruncationNotes } from "./failure-progress.js";
 import { piBashExitMetadata } from "./core/pi-bash-error.js";
 import { normalizePiArguments } from "./core/pi-arguments.js";
 import { pythonErrorRecoveryHint } from "./runtime/python-error-guidance.js";
@@ -150,6 +151,8 @@ export interface FabricExecutionResult {
   error?: string;
   /** Nested results parked for the next program's `prior` after a failure. */
   parkedPriorCalls?: number;
+  /** Parked results that hold truncated data, with the call that gets all of it. */
+  parkedTruncationNotes?: string[];
   handoffRequest?: Record<string, unknown>;
   usage?: Usage;
   /** Stop outcomes for owned provider participants after cancellation or timeout. */
@@ -1307,6 +1310,7 @@ export class FabricExecutionService {
       sandboxResult.error = sandboxResult.error ? `${sandboxResult.error}\n${summary}` : summary;
     }
     if (!succeeded && !python && parked.length > 0) this.#prior = parked;
+    const truncationNotes = parkedTruncationNotes(this.#prior);
     this.activity?.finish(options.parentToolCallId, succeeded, sandboxResult.error);
     itemTransitions.finish(succeeded);
     // Logs, results, and error text reach the model, the event stream, and
@@ -1332,6 +1336,7 @@ export class FabricExecutionService {
       elapsedMs: performance.now() - startedAt,
       ...(sandboxResult.error ? { error: sanitizeFabricMediaText(sandboxResult.error) } : {}),
       ...(this.#prior.length > 0 ? { parkedPriorCalls: this.#prior.length } : {}),
+      ...(truncationNotes.length > 0 ? { parkedTruncationNotes: truncationNotes } : {}),
       ...(handoffRequest ? { handoffRequest } : {}),
       ...(ownedWork.length > 0 ? { ownedWork } : {}),
       ...(classifierUsages.length > 0

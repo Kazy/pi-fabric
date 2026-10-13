@@ -965,7 +965,7 @@ export const createFabricExecTool = (
         );
       }
       const fullFormattedValue = formatFabricValue(result.value, selectedResultFormat);
-      const failureProgress = formatFailureProgress(result.trace, result.parkedPriorCalls);
+      const failureProgress = formatFailureProgress(result.trace, result.parkedPriorCalls, result.parkedTruncationNotes);
       const shellNotes = fabricNotes(result.audits, context.cwd);
       const fullSections = [...result.logs];
       if (fullFormattedValue.text) fullSections.push(fullFormattedValue.text);

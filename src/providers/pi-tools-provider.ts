@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { nativeToolResult } from "../core/native-tool-result.js";
 import path from "node:path";
 import type {
@@ -98,7 +99,8 @@ const closedPiInputSchema = (name: PiCoreToolName, source: unknown): Record<stri
       } };
     }
   }
-  if (name === "write") properties.force = writeForceSchema;
+  const flag = fabricOnlyFlag(name);
+  if (flag) properties[flag.key] = flag.schema;
   return { ...schema, properties, additionalProperties: false };
 };
 
@@ -120,6 +122,65 @@ const parseDurableNotify = (value: unknown): { topic: string; kind?: string } | 
 const writeForceSchema = {
   type: "boolean",
   description: "Write even though this program read only part of the file. Fabric-only; never reaches the write tool.",
+};
+
+const readRawSchema = {
+  type: "boolean",
+  description: "Return the whole text file exactly: no line numbers, notices, or 50KB limit. At most 2,000,000 bytes. Fabric-only; never reaches the read tool.",
+};
+
+const shellFullSchema = {
+  type: "boolean",
+  description: "If the output was truncated, return the full output from fullOutputPath instead (at most 2,000,000 bytes). Fabric-only; never reaches the shell tool.",
+};
+
+// Tool preparation, including an override's, can drop keys it does not know,
+// so these flags are carried around it and removed again in invoke.
+const FABRIC_ONLY_FLAGS: Readonly<Record<string, { key: string; schema: Record<string, unknown> }>> = {
+  write: { key: "force", schema: writeForceSchema },
+  read: { key: "raw", schema: readRawSchema },
+  bash: { key: "full", schema: shellFullSchema },
+  powershell: { key: "full", schema: shellFullSchema },
+};
+
+const fabricOnlyFlag = (name: string) => Object.hasOwn(FABRIC_ONLY_FLAGS, name) ? FABRIC_ONLY_FLAGS[name] : undefined;
+
+// The default executor.maxNestedResultChars, for a context without the registry's bound.
+const DEFAULT_MAX_RESULT_CHARS = 2_000_000;
+
+// The registry bounds the JSON-encoded result, and escapes such as \" make it
+// longer than the text. Refuse here, so the program gets an error that names
+// the cause, not a fabricTruncated object in place of the text.
+const resultTooLarge = (label: string, filePath: string, size: string, maxChars: number) => new Error(
+  `${label} refuses ${filePath}: ${size} is over the ${maxChars}-character result limit (executor.maxNestedResultChars). Make it smaller with pi.bash first (for example jq or head -c).`,
+);
+
+const readRawText = async (filePath: string, label: string, maxChars: number): Promise<string> => {
+  // A UTF-8 character has at most 4 bytes, so a larger file cannot fit.
+  const { size } = await stat(filePath);
+  if (size > maxChars * 4) throw resultTooLarge(label, filePath, `${size} bytes`, maxChars);
+  const buffer = await readFile(filePath);
+  if (buffer.includes(0)) throw new Error(`${label} reads text only; ${filePath} contains NUL bytes`);
+  const text = buffer.toString("utf8");
+  const encoded = JSON.stringify(text).length;
+  if (encoded > maxChars) throw resultTooLarge(label, filePath, `${encoded} JSON-encoded characters`, maxChars);
+  return text;
+};
+
+// Pi keeps only the end of long shell output and saves all of it to a file.
+// Results that were not truncated, including still-running ones, stay as they are.
+const withFullOutput = async (name: string, result: unknown, maxChars: number): Promise<unknown> => {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  if (record.truncated !== true) return result;
+  // The native output schema spells the path full_output_path.
+  const fullPath = record.fullOutputPath ?? record.full_output_path;
+  if (typeof fullPath !== "string") return result;
+  const label = `pi.${name} full:true`;
+  const full = { ...record, output: await readRawText(fullPath, label, maxChars), truncated: false };
+  const encoded = JSON.stringify(full).length;
+  if (encoded > maxChars) throw resultTooLarge(label, fullPath, `the result with ${encoded} JSON-encoded characters`, maxChars);
+  return full;
 };
 
 const MAX_RENDERER_ARGUMENT_CHARS = 200_000;
@@ -240,6 +301,7 @@ const normalizeResult = (
     return text;
   }
   let details = result.details;
+  let truncatedOutput: { truncated: true; fullOutputPath: string } | undefined;
   if (isPiShellToolName(name) && details && typeof details === "object" && !Array.isArray(details)) {
     const detailRecord = details as Record<string, unknown>;
     const truncation = detailRecord.truncation;
@@ -247,6 +309,10 @@ const normalizeResult = (
       const { content, ...truncationMetadata } = truncation as Record<string, unknown>;
       if (typeof content === "string" && text.includes(content)) {
         details = { ...detailRecord, truncation: truncationMetadata };
+      }
+      // Top level, so a program that parses output sees it without reading details.
+      if (truncationMetadata.truncated === true && typeof detailRecord.fullOutputPath === "string") {
+        truncatedOutput = { truncated: true, fullOutputPath: detailRecord.fullOutputPath };
       }
     }
   }
@@ -258,6 +324,7 @@ const normalizeResult = (
     ok: true,
     output: text,
     details: details ?? null,
+    ...truncatedOutput,
   };
 };
 
@@ -348,9 +415,10 @@ export class PiToolsProvider implements FabricProvider {
           namespace: "extension-middleware",
         };
       }
-      if (name === "write") {
+      const flag = fabricOnlyFlag(name);
+      if (flag) {
         const schema = override.inputSchema as Record<string, unknown>;
-        const properties = { ...(schema.properties as Record<string, unknown> | undefined), force: writeForceSchema };
+        const properties = { ...(schema.properties as Record<string, unknown> | undefined), [flag.key]: flag.schema };
         return { ...override, inputSchema: { ...schema, properties }, namespace: "extension-override" };
       }
       return { ...override, namespace: "extension-override" };
@@ -360,12 +428,11 @@ export class PiToolsProvider implements FabricProvider {
     return this.#descriptor(name, tool);
   }
 
-  // Tool preparation, including an override's, may drop keys it does not know.
-  // Carry Fabric's force flag around it so the guard in invoke still sees it.
   prepareArguments(actionName: string, args: Record<string, unknown>): Record<string, unknown> {
-    if (actionName !== "write" || !Object.hasOwn(args, "force")) return this.#prepareToolArguments(actionName, args);
-    const { force, ...rest } = args;
-    return { ...this.#prepareToolArguments(actionName, rest), force };
+    const key = fabricOnlyFlag(actionName)?.key;
+    if (!key || !Object.hasOwn(args, key)) return this.#prepareToolArguments(actionName, args);
+    const { [key]: value, ...rest } = args;
+    return { ...this.#prepareToolArguments(actionName, rest), [key]: value };
   }
 
   #prepareToolArguments(actionName: string, args: Record<string, unknown>): Record<string, unknown> {
@@ -648,15 +715,22 @@ export class PiToolsProvider implements FabricProvider {
       ? resolvePreviewPath(args.path, this.#cwd)
       : undefined;
     let toolArgs = args;
-    let force = false;
-    if (actionName === "write" && Object.hasOwn(args, "force")) {
-      const { force: flag, ...rest } = args;
+    let flagged = false;
+    const key = fabricOnlyFlag(actionName)?.key;
+    if (key && Object.hasOwn(args, key)) {
+      const { [key]: value, ...rest } = args;
       toolArgs = rest;
-      force = flag === true;
+      flagged = value === true;
     }
-    if (actionName === "write" && filePath && !force) {
+    if (actionName === "write" && filePath && !flagged) {
       const partial = this.#partialReads.partial(context.parentToolCallId, filePath);
       if (partial) throw partialReadWriteError({ ...partial, path: args.path as string });
+    }
+    if (actionName === "read" && flagged) return this.#readRaw(toolArgs, filePath, context);
+    const full = flagged && isPiShellToolName(actionName);
+    if (full && this.#bashMiddleware(actionName)) {
+      // The saved file holds the output before the extension's filter ran.
+      throw new Error(`pi.${actionName} full:true is unavailable while an extension filters shell output`);
     }
     const result = await this.#invokeTool(actionName, toolArgs, context);
     if (filePath && actionName === "read" && typeof result === "string") {
@@ -664,7 +738,25 @@ export class PiToolsProvider implements FabricProvider {
     } else if (filePath && actionName === "write") {
       this.#partialReads.recordWrite(context.parentToolCallId, filePath);
     }
-    return result;
+    return full ? withFullOutput(actionName, result, context.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS) : result;
+  }
+
+  // The one-line probe goes through the normal read, so approval, write policy,
+  // and tool_call hooks still decide access. A tool_result patch on the probe
+  // does not apply to the raw text; raw is an explicit opt-in by the program.
+  async #readRaw(
+    args: Record<string, unknown>,
+    filePath: string | undefined,
+    context: FabricInvocationContext,
+  ): Promise<string> {
+    if (!filePath) throw new Error("pi.read raw:true requires a path");
+    if (args.offset !== undefined || args.limit !== undefined) {
+      throw new Error("pi.read raw:true returns the whole file; remove offset and limit");
+    }
+    await this.#invokeTool("read", { ...args, limit: 1 }, context);
+    const text = await readRawText(filePath, "pi.read raw:true", context.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS);
+    this.#partialReads.recordFullRead(context.parentToolCallId, filePath, text);
+    return text;
   }
 
   async invocationEnded(parentToolCallId: string): Promise<void> {
