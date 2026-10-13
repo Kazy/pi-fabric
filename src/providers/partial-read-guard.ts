@@ -6,6 +6,10 @@ const SHOWING = /\n\n\[Showing lines (\d+)-(\d+) of (\d+)(?: \([^)]*\))?\. Use o
 const MORE = /\n\n\[(\d+) more lines in file\. Use offset=(\d+) to continue\.\]$/;
 const LONG_LINE = /^\[Line \d+ is [^\]]*, exceeds [^\]]* limit\. Use bash: [^\]]*\]$/;
 
+/** True when a read result is a notice in place of the content, or ends before the file does. */
+export const isPartialReadText = (text: string): boolean =>
+  LONG_LINE.test(text) || SHOWING.test(text) || MORE.test(text);
+
 type Coverage = { ranges: Array<[number, number]>; total: number | undefined; blocked: boolean };
 
 export type PartialReadNotice = { path: string; seen: number; total: number | undefined };
@@ -59,6 +63,14 @@ export class PartialReadGuard {
     if (range) coverage.ranges.push(range);
     else coverage.blocked = true;
     if (total !== undefined) coverage.total = total;
+  }
+
+  // A raw read has no notices to parse, and file text can look like one.
+  recordFullRead(invocation: string, path: string, text: string): void {
+    const files = this.#invocations.get(invocation) ?? new Map<string, Coverage>();
+    this.#invocations.set(invocation, files);
+    const total = text.split("\n").length;
+    files.set(path, { ranges: [[1, total]], total, blocked: false });
   }
 
   // A successful write replaces the file with text the guest holds in full.
