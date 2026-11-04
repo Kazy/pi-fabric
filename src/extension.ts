@@ -109,6 +109,7 @@ import { formatFabricValue } from "./ui/structured.js";
 import { truncateMiddle } from "./util.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { childExtensionPath } from "./runtime-paths.js";
 import { captureLoadedFileIdentity } from "./build-identity.js";
 
 export const FABRIC_MANAGED_HOST_VERSION = 2;
@@ -135,7 +136,7 @@ export function createFabricExtension(entryUrl: string) {
 const FABRIC_EXTENSION_ENTRY_PATH = path.resolve(fileURLToPath(entryUrl));
 const FABRIC_ENTRY_DIR = path.dirname(FABRIC_EXTENSION_ENTRY_PATH);
 const FABRIC_RUNTIME_PATHS = {
-  extension: FABRIC_EXTENSION_ENTRY_PATH,
+  extension: childExtensionPath(FABRIC_EXTENSION_ENTRY_PATH),
   worker: path.join(FABRIC_ENTRY_DIR, "worker.js"),
   residentHost: path.join(FABRIC_ENTRY_DIR, "residency", "launcher.js"),
   skills: path.resolve(FABRIC_ENTRY_DIR, "..", "skillsets"),

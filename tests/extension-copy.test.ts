@@ -6,15 +6,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commandLineFabricCopy } from "../src/extension-copy.js";
 import piFabric from "../src/index.js";
+import { childExtensionPath } from "../src/runtime-paths.js";
 
 let root: string;
 
-const makeCopy = (directory: string, options: { name?: string; entry?: string } = {}): string => {
+const makeCopy = (directory: string, options: { name?: string; entry?: string; listed?: string } = {}): string => {
   const entry = options.entry ?? "dist/extension-bootstrap.js";
   fs.mkdirSync(path.join(root, directory, path.dirname(entry)), { recursive: true });
   fs.writeFileSync(
     path.join(root, directory, "package.json"),
-    JSON.stringify({ name: options.name ?? "pi-fabric", pi: { extensions: ["./dist/extension-bootstrap.js"] } }),
+    JSON.stringify({ name: options.name ?? "pi-fabric", pi: { extensions: [options.listed ?? "./dist/extension-bootstrap.js"] } }),
   );
   fs.writeFileSync(path.join(root, directory, entry), "export default () => {};\n");
   return path.join(root, directory, entry);
@@ -88,6 +89,20 @@ describe("commandLineFabricCopy", () => {
     expect(commandLineFabricCopy(index, cli(index))).toBeUndefined();
   });
 
+  it("treats extension-entry.ts as the bootstrap it re-exports", () => {
+    const listed = "./dist/extension-entry.ts";
+    const bootstrap = makeCopy("build", { listed });
+    const entry = makeCopy("build", { entry: "dist/extension-entry.ts", listed });
+    const profileBuild = makeCopy("profile-build");
+    fs.symlinkSync(path.join(root, "build"), path.join(root, "current"), process.platform === "win32" ? "junction" : "dir");
+
+    expect(commandLineFabricCopy(bootstrap, cli(entry))).toBeUndefined();
+    expect(commandLineFabricCopy(bootstrap, cli("current/dist/extension-entry.ts"))).toBeUndefined();
+    expect(commandLineFabricCopy(bootstrap, cli("build"))).toBeUndefined();
+    expect(commandLineFabricCopy(profileBuild, cli(entry))).toBe(bootstrap);
+    expect(commandLineFabricCopy(profileBuild, cli("current"))).toBe(bootstrap);
+  });
+
   it("ignores Fabric helper modules that do not register Fabric", () => {
     const helperBuild = makeCopy("build-1");
     const guard = makeCopy("build-1", { entry: "dist/agents/write-guard.js" });
@@ -105,6 +120,26 @@ describe("commandLineFabricCopy", () => {
     expect(commandLineFabricCopy(first, cli(first, second))).toBeUndefined();
     expect(commandLineFabricCopy(second, cli(first, second))).toBe(first);
     expect(commandLineFabricCopy(profile, cli(first, second))).toBe(first);
+  });
+});
+
+describe("childExtensionPath", () => {
+  it("names the package entry next to the bootstrap, so Pi loads one copy", () => {
+    const bootstrap = makeCopy("build");
+    const index = makeCopy("build", { entry: "dist/index.js" });
+
+    expect(childExtensionPath(bootstrap)).toBe(bootstrap);
+    const entry = makeCopy("build", { entry: "dist/extension-entry.ts" });
+    expect(childExtensionPath(bootstrap)).toBe(entry);
+    expect(childExtensionPath(index)).toBe(index);
+    // The child's own bootstrap must not defer to the path its parent passed.
+    expect(commandLineFabricCopy(bootstrap, cli(childExtensionPath(bootstrap)))).toBeUndefined();
+  });
+
+  it("finds the source entry next to the source bootstrap", () => {
+    const bootstrap = fileURLToPath(new URL("../src/extension-bootstrap.ts", import.meta.url));
+
+    expect(childExtensionPath(bootstrap)).toBe(fileURLToPath(new URL("../src/extension-entry.ts", import.meta.url)));
   });
 });
 

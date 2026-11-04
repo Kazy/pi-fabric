@@ -2,9 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// Modules that register Fabric: src/index.ts, src/extension-bootstrap.ts and their dist builds.
+// Modules that register Fabric: src/index.ts, src/extension-bootstrap.ts, src/extension-entry.ts
+// and their dist builds.
 const ENTRY_DIRECTORIES = new Set(["dist", "src"]);
-const ENTRY_STEMS = new Set(["index", "extension-bootstrap"]);
+const ENTRY_STEMS = new Set(["index", "extension-bootstrap", "extension-entry"]);
 
 interface FabricCopy {
   root: string;
@@ -90,12 +91,25 @@ const describeCopy = (location: string, entryOnly: boolean): FabricCopy | undefi
   if (directory) {
     const name = packageName(real);
     const file = name ? directoryEntry(real) : undefined;
-    return name && file ? { root: real, name, file } : undefined;
+    return name && file ? { root: real, name, file: loadedModule(file) } : undefined;
   }
   const owner = enclosingPackage(real);
   if (!owner) return undefined;
   if (entryOnly && !isEntryModule(owner.root, real)) return undefined;
-  return { ...owner, file: real };
+  return { ...owner, file: loadedModule(real) };
+};
+
+// extension-entry.ts only re-exports the bootstrap, whose URL is the entry path Fabric reports.
+const loadedModule = (file: string): string => {
+  if (path.basename(file) !== "extension-entry.ts") return file;
+  for (const extension of [".js", ".ts"]) {
+    try {
+      return fs.realpathSync(path.join(path.dirname(file), `extension-bootstrap${extension}`));
+    } catch {
+      // dist/ has the .js build, src/ has the .ts source.
+    }
+  }
+  return file;
 };
 
 const resolveArgument = (value: string, cwd: string): string => {
