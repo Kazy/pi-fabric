@@ -538,4 +538,41 @@ describe("FabricControlPlane", () => {
       sender.request("host:receiver", "agent:missing", "stop"),
     ).rejects.toThrow("target already settled");
   });
+
+  it.skipIf(process.platform === "win32")("wakes on a mesh write instead of waiting for the poll interval", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fabric-control-"));
+    roots.push(root);
+    const meshRoot = path.join(root, "mesh");
+    const sender = plane(meshRoot, "host:sender", {}, { pollMs: 60_000 });
+    const receiver = plane(meshRoot, "host:receiver", {}, { pollMs: 60_000 });
+    sender.start(() => ({ accepted: false }));
+    receiver.start(() => ({ accepted: true, messageId: "message:1" }));
+
+    const startedAt = Date.now();
+    await expect(
+      sender.request("host:receiver", "agent:target", "steer", { message: "focus" }),
+    ).resolves.toMatchObject({ acknowledged: true, messageId: "message:1" });
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("polls at pollMs when the mesh root cannot be watched", async () => {
+    const watch = vi.spyOn(fs, "watch").mockImplementation(() => {
+      throw new Error("watch unsupported");
+    });
+    try {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fabric-control-"));
+      roots.push(root);
+      const meshRoot = path.join(root, "mesh");
+      const sender = plane(meshRoot, "host:sender");
+      const receiver = plane(meshRoot, "host:receiver");
+      sender.start(() => ({ accepted: false }));
+      receiver.start(() => ({ accepted: true, messageId: "message:1" }));
+
+      await expect(
+        sender.request("host:receiver", "agent:target", "steer", { message: "focus" }),
+      ).resolves.toMatchObject({ acknowledged: true, messageId: "message:1" });
+    } finally {
+      watch.mockRestore();
+    }
+  });
 });

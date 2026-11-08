@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import fs, { type FSWatcher } from "node:fs";
+import path from "node:path";
 import type { FabricActorRunBinding } from "../actors/types.js";
 import { MeshStore, type MeshEvent, type MeshIdentity } from "../mesh/store.js";
 import type { FabricMessageSender } from "../protocol.js";
@@ -7,6 +9,7 @@ const CONTROL_TOPIC = "fabric.control.command";
 const ACK_TOPIC = "fabric.control.ack";
 const CONTROL_SEEN_PREFIX = "topology/control-seen/";
 const DEFAULT_POLL_MS = 100;
+const WATCH_RECONCILE_MS = 2_000;
 const DEFAULT_ACK_TIMEOUT_MS = 5_000;
 const DEFAULT_RESULT_TIMEOUT_MS = 60 * 60 * 1_000;
 const MAX_CONTROL_TIMEOUT_MS = 24 * 60 * 60 * 1_000 + 60_000;
@@ -175,7 +178,9 @@ export class FabricControlPlane {
   #offset: number;
   #lastSequence: number;
   #timer: NodeJS.Timeout | undefined;
+  #watcher: FSWatcher | undefined;
   #polling: Promise<void> | undefined;
+  #pollAgain = false;
   #closed = false;
   #handler: FabricControlHandler | undefined;
   #seenCleanupAt = 0;
@@ -202,7 +207,39 @@ export class FabricControlPlane {
     this.#handler = handler;
     if (!this.options.enabled || this.#timer) return;
     this.#closed = false;
-    this.#timer = setInterval(() => void this.#poll().catch(() => undefined), this.#pollMs);
+    // Each poll is sync file I/O on the main thread, which stalls the TUI on a
+    // slow file system. A watched root wakes the poll on each append, so the
+    // timer only reconciles missed events.
+    this.#startTimer(this.#watch() ? Math.max(WATCH_RECONCILE_MS, this.#pollMs) : this.#pollMs);
+    // Commands published before startup produce no watch event.
+    void this.#poll().catch(() => undefined);
+  }
+
+  #watch(): boolean {
+    if (process.platform === "win32") return false;
+    try {
+      const watcher = fs.watch(this.mesh.root, { persistent: false }, (_event, filename) => {
+        // Bun reports no filename; poll then too.
+        const name = filename == null ? undefined : path.basename(filename.toString());
+        if (name !== undefined && name !== "events.jsonl") return;
+        void this.#poll().catch(() => undefined);
+      });
+      watcher.on("error", () => {
+        if (this.#watcher !== watcher) return;
+        watcher.close();
+        this.#watcher = undefined;
+        if (!this.#closed) this.#startTimer(this.#pollMs);
+      });
+      this.#watcher = watcher;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  #startTimer(delay: number): void {
+    if (this.#timer) clearInterval(this.#timer);
+    this.#timer = setInterval(() => void this.#poll().catch(() => undefined), delay);
     this.#timer.unref();
   }
 
@@ -391,6 +428,8 @@ export class FabricControlPlane {
     if (this.#closed) return;
     if (this.#timer) clearInterval(this.#timer);
     this.#timer = undefined;
+    this.#watcher?.close();
+    this.#watcher = undefined;
     await this.#polling?.catch(() => undefined);
     await this.#drain().catch(() => undefined);
     this.#closed = true;
@@ -409,8 +448,19 @@ export class FabricControlPlane {
 
   async #poll(): Promise<void> {
     if (this.#closed || !this.options.enabled) return;
-    if (this.#polling) return this.#polling;
-    const operation = this.#drain();
+    if (this.#polling) {
+      // An append during a drain can land after its last tail read, and its
+      // watch event arrives now: drain once more instead of waiting for the
+      // reconcile timer.
+      this.#pollAgain = true;
+      return this.#polling;
+    }
+    const operation = (async () => {
+      do {
+        this.#pollAgain = false;
+        await this.#drain();
+      } while (this.#pollAgain && !this.#closed);
+    })();
     this.#polling = operation;
     try {
       await operation;
