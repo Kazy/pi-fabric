@@ -24,7 +24,7 @@ async function loadNative(): Promise<{ native: typeof MontyNative; binaryPath: s
     const binaryPath = nativeRequire.resolve(`@pydantic/monty-${triple}/${process.platform === "win32" ? "monty.exe" : "monty"}`);
     return { native, binaryPath };
   } catch (error) {
-    throw new Error("Monty optional native package is unavailable or incompatible. Install @pydantic/monty@0.0.23 with its platform optional dependencies (bun add --optional --exact @pydantic/monty@0.0.23), or select executor.pythonRuntime='cpython'. " + montyErrorText(error));
+    throw new Error("Monty optional native package is unavailable or incompatible. Install @pydantic/monty@1.5.0 with its platform optional dependencies (bun add --optional --exact @pydantic/monty@1.5.0), or select executor.pythonRuntime='cpython'. " + montyErrorText(error));
   }
 }
 
@@ -121,9 +121,9 @@ export class MontyRuntime implements FabricKernelRuntime {
           // A fixed VM/per-turn limit would defeat a longer host-call floor. In that
           // mode the reschedulable host watchdog hard-kills the captured native PID.
           ...(options.minimumTimeoutMsForHostCall ? {
-            durationLimitGrace: null, requestTimeout: MAX_EXECUTOR_TIMEOUT_MS / 1000 + 1,
+            feedDurationLimitGrace: null, requestTimeout: MAX_EXECUTOR_TIMEOUT_MS / 1000 + 1,
           } : {
-            requestTimeout: options.timeoutMs / 1000 + 1, durationLimitGrace: 1,
+            requestTimeout: options.timeoutMs / 1000 + 1, feedDurationLimitGrace: 1,
           }),
         });
         if (hostAbort.signal.aborted) { await created.close(); throw hostAbort.signal.reason; }
@@ -134,7 +134,7 @@ export class MontyRuntime implements FabricKernelRuntime {
         const checkedOut = await ownedPool.checkout({
           scriptName: "fabric-exec.py", printFlushInterval: 0,
           limits: { maxMemory: options.memoryLimitBytes, maxRecursionDepth: 500, maxSuspensions: 10_000,
-            ...(!options.minimumTimeoutMsForHostCall ? { maxDurationSecs: options.timeoutMs / 1000 } : {}),
+            ...(!options.minimumTimeoutMsForHostCall ? { maxFeedDurationSecs: options.timeoutMs / 1000 } : {}),
           },
         });
         if (hostAbort.signal.aborted) { await checkedOut.close(); throw hostAbort.signal.reason; }

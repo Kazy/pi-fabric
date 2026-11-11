@@ -21,7 +21,7 @@ const echo: FabricHostCall = async (ref, args) => ({ ref, args });
 const run = (code: string, host: FabricHostCall = echo, extra: Partial<FabricSandboxOptions> = {}) => new MontyRuntime().execute(code, host, { ...options, ...extra });
 afterEach(() => vi.restoreAllMocks());
 
-describe.skipIf(Boolean(missing))(`MontyRuntime native 0.0.23${missing ? " (" + missing + ")" : ""}`, () => {
+describe.skipIf(Boolean(missing))(`MontyRuntime native 1.5.0${missing ? " (" + missing + ")" : ""}`, () => {
   it("routes the cache primitive through the same host bridge", async () => {
     expect(await run('return await cache.status(target="self")')).toMatchObject({
       terminationReason: "completed", value: { ref: "cache.status", args: { target: "self" } },
@@ -186,9 +186,9 @@ describe.skipIf(Boolean(missing))(`MontyRuntime native 0.0.23${missing ? " (" + 
       return pool;
     });
     expect(await run("return 1", echo, { timeoutMs: 100, minimumTimeoutMsForHostCall: () => 1000 })).toMatchObject({ value: 1, terminationReason: "completed" });
-    expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({ requestTimeout: MAX_EXECUTOR_TIMEOUT_MS / 1000 + 1, durationLimitGrace: null }));
+    expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({ requestTimeout: MAX_EXECUTOR_TIMEOUT_MS / 1000 + 1, feedDurationLimitGrace: null }));
     expect(checkouts[0]).toMatchObject({ limits: { maxMemory: options.memoryLimitBytes } });
-    expect((checkouts[0] as { limits: object }).limits).not.toHaveProperty("maxDurationSecs");
+    expect((checkouts[0] as { limits: object }).limits).not.toHaveProperty("maxFeedDurationSecs");
   });
 
   it("hard-interrupts synchronous loops with and without extendable deadlines", async () => {
@@ -305,7 +305,7 @@ describe("MontyRuntime availability and option validation", () => {
       const result = await run("return 1");
       expect(result.terminationReason).toBe("runtime_error");
       expect(result.error).toContain("optional native package is unavailable or incompatible");
-      expect(result.error).toContain("@pydantic/monty@0.0.23");
+      expect(result.error).toContain("@pydantic/monty@1.5.0");
       expect(result.error).toContain("cpython");
     } finally { vi.doUnmock("@pydantic/monty/node"); }
   });
